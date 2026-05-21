@@ -1,0 +1,105 @@
+import { readLocalProject, saveLocalProject, type LocalProjectSummary } from '../library/localProjectStore'
+import { upgradeWorkbenchProjectMediaUrls } from './projectMediaMigration'
+import {
+  clearActiveWorkbenchProjectSaveTarget,
+  restoreWorkbenchProjectPayload,
+  subscribeWorkbenchProjectPersistence,
+} from './workbenchProjectSession'
+import type { WorkbenchProjectPayload, WorkbenchProjectRecordV1 } from './projectRecordSchema'
+
+const LAST_ACTIVE_PROJECT_KEY = 'nomi-workbench-last-active-project-v1'
+
+type Dependencies = {
+  setActiveProject: (project: LocalProjectSummary | null) => void
+  setView: (view: 'library' | 'studio') => void
+  onSaveError: (error: unknown) => void
+}
+
+function readWindowSearchParam(name: string): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const url = new URL(window.location.href)
+    const directValue = url.searchParams.get(name)
+    if (directValue && directValue.trim()) return directValue.trim()
+    const hashSearch = url.hash.includes('?') ? url.hash.slice(url.hash.indexOf('?')) : ''
+    const value = hashSearch ? new URLSearchParams(hashSearch).get(name) : ''
+    return value && value.trim() ? value.trim() : null
+  } catch {
+    return null
+  }
+}
+
+function writeLastActiveProjectId(projectId: string): void {
+  if (typeof window === 'undefined') return
+  const id = projectId.trim()
+  if (!id) return
+  window.localStorage.setItem(LAST_ACTIVE_PROJECT_KEY, id)
+}
+
+export type WorkbenchProjectPersistenceService = {
+  hydrateProject: (projectId: string) => Promise<WorkbenchProjectRecordV1 | null>
+  hydrateInitialProject: (projects: readonly LocalProjectSummary[]) => Promise<WorkbenchProjectRecordV1 | null>
+  persistProject: (project: LocalProjectSummary, payload: WorkbenchProjectPayload) => Promise<WorkbenchProjectRecordV1>
+  bindProjectPersistence: (input: {
+    project: LocalProjectSummary
+    isHydrating: () => boolean
+    canPersist: () => boolean
+    onSaved: (record: WorkbenchProjectRecordV1) => void
+    onSaveError: (error: unknown) => void
+  }) => () => void
+}
+
+export function createWorkbenchProjectPersistenceService(deps: Dependencies): WorkbenchProjectPersistenceService {
+  const persistProject = async (project: LocalProjectSummary, payload: WorkbenchProjectPayload): Promise<WorkbenchProjectRecordV1> => {
+    const localSaved = saveLocalProject(project.id, payload, project.name)
+    writeLastActiveProjectId(localSaved.id)
+    deps.setActiveProject(localSaved)
+    return localSaved
+  }
+
+  const bindProjectPersistence = (input: {
+    project: LocalProjectSummary
+    isHydrating: () => boolean
+    canPersist: () => boolean
+    onSaved: (record: WorkbenchProjectRecordV1) => void
+    onSaveError: (error: unknown) => void
+  }): (() => void) => {
+    return subscribeWorkbenchProjectPersistence({
+      projectId: input.project.id,
+      projectName: input.project.name,
+      isHydrating: input.isHydrating,
+      canPersist: input.canPersist,
+      saveProject: async (_projectId, payload, _projectName) => persistProject(input.project, payload),
+      onSaved: input.onSaved,
+      onSaveError: input.onSaveError,
+    })
+  }
+
+  const hydrateProject = async (projectId: string): Promise<WorkbenchProjectRecordV1 | null> => {
+    const project = readLocalProject(projectId)
+    if (!project) return null
+    clearActiveWorkbenchProjectSaveTarget()
+    const upgraded = await upgradeWorkbenchProjectMediaUrls(project)
+    if (upgraded !== project) {
+      saveLocalProject(upgraded.id, upgraded.payload, upgraded.name)
+    }
+    restoreWorkbenchProjectPayload(upgraded.payload)
+    writeLastActiveProjectId(upgraded.id)
+    deps.setActiveProject(upgraded)
+    deps.setView('studio')
+    return upgraded
+  }
+
+  const hydrateInitialProject = async (_projects: readonly LocalProjectSummary[]): Promise<WorkbenchProjectRecordV1 | null> => {
+    const explicitProjectId = readWindowSearchParam('projectId')
+    if (!explicitProjectId) return null
+    return hydrateProject(explicitProjectId)
+  }
+
+  return {
+    hydrateProject,
+    hydrateInitialProject,
+    persistProject,
+    bindProjectPersistence,
+  }
+}

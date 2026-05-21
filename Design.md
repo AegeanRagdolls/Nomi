@@ -13,6 +13,7 @@ Script -> Generate -> Edit -> Preview -> Export
 - Prioritize dense, useful production surfaces over decorative marketing layout.
 - Use one clear visual hierarchy: spacing, typography, and subtle surface contrast before borders.
 - Keep creator control explicit; AI suggestions should not hide final user decisions.
+- Keep local project and asset visibility obvious in desktop workflows.
 
 ## Tokens
 

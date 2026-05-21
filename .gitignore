@@ -5,6 +5,7 @@ node_modules/
 
 # Build output
 dist/
+dist-electron/
 dist-local/
 .turbo/
 coverage/
@@ -15,11 +16,6 @@ playwright-report/
 # Environment and local secrets
 .env
 .env.*
-apps/**/.env
-apps/**/.env.*
-packages/**/.env
-packages/**/.env.*
-apps/agents-cli/agents.config.json
 
 # Runtime data
 project-data/
