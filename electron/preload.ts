@@ -26,7 +26,7 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
   },
   exports: {
     start: (payload: unknown) => ipcRenderer.invoke("nomi:exports:start", payload),
-    showInFolder: (filePath: string) => ipcRenderer.invoke("nomi:exports:show-in-folder", filePath),
+    showInFolder: (payload: unknown) => ipcRenderer.invoke("nomi:exports:show-in-folder", payload),
   },
   tasks: {
     run: (payload: unknown) => ipcRenderer.invoke("nomi:tasks:run", payload),

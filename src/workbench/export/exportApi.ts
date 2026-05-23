@@ -44,6 +44,7 @@ export async function exportTimelineToMp4(options: ExportTimelineToMp4Options): 
       webmBytes: await webmBlob.arrayBuffer(),
       outputName: options.outputName,
       resolution: options.resolution || '1080p',
+      aspectRatio: options.aspectRatio,
       quality: options.quality || 'standard',
       fps: options.timeline.fps || 30,
     })

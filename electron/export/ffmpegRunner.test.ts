@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveFfmpegPath, transcodeWebmToMp4 } from "./ffmpegRunner";
+import { exportDimensionsForPreset, resolveFfmpegPath, transcodeWebmToMp4 } from "./ffmpegRunner";
 
 const tempRoots: string[] = [];
 
@@ -45,6 +45,18 @@ describe("resolveFfmpegPath", () => {
     fs.writeFileSync(resourceBinary, "binary");
 
     expect(resolveFfmpegPath(undefined, { bundledPath: "", resourcesPath: root, pathEnv: "" })).toBe(resourceBinary);
+  });
+});
+
+describe("exportDimensionsForPreset", () => {
+  it("keeps landscape 1080p exports at the standard 1920x1080 size", () => {
+    expect(exportDimensionsForPreset("1080p", "16:9")).toEqual({ width: 1920, height: 1080 });
+  });
+
+  it("exports vertical and square aspect ratios as native social-video canvases", () => {
+    expect(exportDimensionsForPreset("1080p", "9:16")).toEqual({ width: 1080, height: 1920 });
+    expect(exportDimensionsForPreset("1080p", "1:1")).toEqual({ width: 1080, height: 1080 });
+    expect(exportDimensionsForPreset("720p", "4:5")).toEqual({ width: 720, height: 900 });
   });
 });
 

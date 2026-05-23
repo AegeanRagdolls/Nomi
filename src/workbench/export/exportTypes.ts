@@ -22,6 +22,7 @@ export type DesktopMp4ExportStartPayload = {
   webmBytes: ArrayBuffer
   outputName?: string
   resolution?: Exclude<ExportResolution, 'source'>
+  aspectRatio?: PreviewAspectRatio
   quality?: ExportQuality
   fps?: number
 }

@@ -16,6 +16,7 @@ export type TranscodeWebmToMp4Options = {
   outputName?: string;
   ffmpegPath?: string;
   resolution?: "720p" | "1080p";
+  aspectRatio?: "16:9" | "9:16" | "1:1" | "4:5" | "3:4" | "4:3" | "21:9";
   quality?: "small" | "standard" | "high";
   fps?: number;
   runProcess?: RunFfmpegProcess;
@@ -37,6 +38,31 @@ const QUALITY_CRF: Record<"small" | "standard" | "high", string> = {
   standard: "23",
   high: "18",
 };
+
+const ASPECT_RATIO_VALUE: Record<NonNullable<TranscodeWebmToMp4Options["aspectRatio"]>, number> = {
+  "16:9": 16 / 9,
+  "9:16": 9 / 16,
+  "1:1": 1,
+  "4:5": 4 / 5,
+  "3:4": 3 / 4,
+  "4:3": 4 / 3,
+  "21:9": 21 / 9,
+};
+
+function even(value: number): number {
+  return Math.max(2, Math.round(value / 2) * 2);
+}
+
+export function exportDimensionsForPreset(
+  resolution: "720p" | "1080p" = "1080p",
+  aspectRatio: TranscodeWebmToMp4Options["aspectRatio"] = "16:9",
+): { width: number; height: number } {
+  if (!aspectRatio || aspectRatio === "16:9") return RESOLUTION_SIZE[resolution];
+  const base = resolution === "720p" ? 720 : 1080;
+  const ratio = ASPECT_RATIO_VALUE[aspectRatio] || ASPECT_RATIO_VALUE["16:9"];
+  if (ratio >= 1) return { width: even(base * ratio), height: even(base) };
+  return { width: even(base), height: even(base / ratio) };
+}
 
 function executablePathForRuntime(candidate: string): string {
   if (!candidate.includes("app.asar")) return candidate;
@@ -136,7 +162,7 @@ export async function transcodeWebmToMp4(options: TranscodeWebmToMp4Options): Pr
   const outputPath = uniqueOutputPath(exportsDir, options.outputName);
   fs.writeFileSync(inputPath, options.inputBytes);
 
-  const resolution = RESOLUTION_SIZE[options.resolution || "1080p"];
+  const resolution = exportDimensionsForPreset(options.resolution || "1080p", options.aspectRatio || "16:9");
   const fps = Math.max(1, Math.floor(options.fps || 30));
   const vf = `scale=${resolution.width}:${resolution.height}:force_original_aspect_ratio=decrease,pad=${resolution.width}:${resolution.height}:(ow-iw)/2:(oh-ih)/2:color=black,format=yuv420p`;
   const args = [

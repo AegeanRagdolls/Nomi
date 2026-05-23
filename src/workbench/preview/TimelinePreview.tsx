@@ -13,6 +13,7 @@ import { buildVideoPlaybackUrl } from '../../media/videoPlaybackUrl'
 import { diagnoseVideoPlaybackFailure, logVideoPlaybackFailure } from '../../media/videoPlaybackDiagnostics'
 import { computeTimelineDuration } from '../timeline/timelineMath'
 import { getDesktopBridge } from '../../desktop/bridge'
+import { getDesktopActiveProjectId } from '../../desktop/activeProject'
 
 type TimelinePreviewProps = {
   activeClips: TimelineClip[]
@@ -209,9 +210,11 @@ export default function TimelinePreview({ activeClips, aspectRatio, fps, playhea
     try {
       setExportStatus('preparing')
       setExportRatio(0)
+      const projectId = getDesktopActiveProjectId().trim()
       const result = await exportTimelineToMp4({
         timeline,
         aspectRatio,
+        projectId,
         resolution: '1080p',
         quality: 'standard',
         onProgress: (progress: Parameters<NonNullable<ExportTimelineToMp4Options['onProgress']>>[0]) => {
@@ -220,7 +223,7 @@ export default function TimelinePreview({ activeClips, aspectRatio, fps, playhea
         },
       })
       toast(`已导出到项目 exports 文件夹：${result.relativePath}`, 'success')
-      void getDesktopBridge()?.exports.showInFolder(result.absolutePath).catch(() => undefined)
+      void getDesktopBridge()?.exports.showInFolder({ projectId, relativePath: result.relativePath }).catch(() => undefined)
       setExportStatus('idle')
     } catch (error) {
       setExportStatus('idle')

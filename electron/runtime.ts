@@ -124,8 +124,14 @@ type TimelineMp4ExportRequest = {
   webmBytes?: ArrayBuffer | Uint8Array | number[];
   outputName?: string;
   resolution?: "720p" | "1080p";
+  aspectRatio?: "16:9" | "9:16" | "1:1" | "4:5" | "3:4" | "4:3" | "21:9";
   quality?: "small" | "standard" | "high";
   fps?: number;
+};
+
+type ShowExportInFolderRequest = {
+  projectId?: string;
+  relativePath?: string;
 };
 
 type TaskResult = {
@@ -483,9 +489,29 @@ export async function startTimelineMp4Export(payload: unknown): Promise<unknown>
     inputBytes: bufferFromExportBytes(raw.webmBytes),
     outputName: raw.outputName || "nomi-export",
     resolution: raw.resolution || "1080p",
+    aspectRatio: raw.aspectRatio || "16:9",
     quality: raw.quality || "standard",
     fps: raw.fps || 30,
   });
+}
+
+export function showExportInFolder(payload: unknown): { ok: true } {
+  const raw = (payload || {}) as ShowExportInFolderRequest;
+  const projectId = String(raw.projectId || "").trim();
+  const relativePath = String(raw.relativePath || "").trim();
+  if (!projectId) throw new Error("打开导出位置失败：缺少项目 ID");
+  if (!relativePath) throw new Error("打开导出位置失败：缺少导出文件路径");
+  const normalized = relativePath.replace(/\\/g, "/");
+  if (!normalized.startsWith("exports/") || normalized.includes("..")) {
+    throw new Error("打开导出位置失败：只能打开当前项目 exports 文件夹内的文件");
+  }
+  const resolved = resolveProjectRelativePath(projectId, normalized);
+  if (!fs.existsSync(resolved)) throw new Error("打开导出位置失败：导出文件不存在");
+  // Lazy require keeps runtime.ts usable in tests that do not initialize Electron shell.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { shell } = require("electron") as typeof import("electron");
+  shell.showItemInFolder(resolved);
+  return { ok: true };
 }
 
 function catalogPath(): string {

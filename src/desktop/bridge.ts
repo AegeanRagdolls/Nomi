@@ -13,6 +13,7 @@ export type DesktopMp4ExportStartPayload = {
   webmBytes: ArrayBuffer
   outputName?: string
   resolution?: '720p' | '1080p'
+  aspectRatio?: '16:9' | '9:16' | '1:1' | '4:5' | '3:4' | '4:3' | '21:9'
   quality?: 'small' | 'standard' | 'high'
   fps?: number
 }
@@ -56,7 +57,7 @@ export type DesktopBridge = {
   }
   exports: {
     start: (payload: DesktopMp4ExportStartPayload) => Promise<DesktopMp4ExportResult>
-    showInFolder: (filePath: string) => Promise<{ ok: boolean }>
+    showInFolder: (payload: { projectId: string; relativePath: string }) => Promise<{ ok: boolean }>
   }
   tasks: {
     run: (payload: unknown) => Promise<unknown>

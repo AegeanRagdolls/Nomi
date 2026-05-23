@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, protocol, shell, webContents as electronWebContents } from "electron";
+import { app, BrowserWindow, ipcMain, net, protocol, webContents as electronWebContents } from "electron";
 import type { WebContents } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -26,6 +26,7 @@ import {
   runAgentChatV2,
   runTask,
   saveProject,
+  showExportInFolder,
   startTimelineMp4Export,
   testModelCatalogMapping,
   upsertModelCatalogMapping,
@@ -183,11 +184,7 @@ function registerIpc(): void {
   ipcMain.handle("nomi:assets:import-file", (_event, payload) => importLocalFile(payload));
   ipcMain.handle("nomi:assets:list", (_event, payload) => listProjectAssets(payload));
   ipcMain.handle("nomi:exports:start", (_event, payload) => startTimelineMp4Export(payload));
-  ipcMain.handle("nomi:exports:show-in-folder", (_event, filePath) => {
-    const resolved = path.resolve(String(filePath || ""));
-    shell.showItemInFolder(resolved);
-    return { ok: true };
-  });
+  ipcMain.handle("nomi:exports:show-in-folder", (_event, payload) => showExportInFolder(payload));
   ipcMain.handle("nomi:tasks:run", (_event, payload) => runTask(payload));
   ipcMain.handle("nomi:tasks:result", (_event, payload) => fetchTaskResult(payload));
   ipcMain.handle("nomi:agents:chat", (_event, payload) => runAgentChat(payload));
