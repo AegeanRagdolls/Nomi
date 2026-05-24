@@ -1,5 +1,5 @@
 import React from 'react'
-import { IconCopy, IconCut, IconX } from '@tabler/icons-react'
+import { IconCopy, IconCut, IconFolderPlus, IconX } from '@tabler/icons-react'
 import { Scissors } from 'lucide-react'
 import { WorkbenchButton, WorkbenchIconButton } from '../../../design'
 import { toast } from '../../../ui/toast'
@@ -143,7 +143,7 @@ function getCanvasGroupBoxes(groups: readonly NodeGroup[], nodes: readonly Gener
   return groups.flatMap((group) => {
     const members = group.nodeIds.flatMap((nodeId) => {
       const node = nodeById.get(nodeId)
-      return node && node.categoryId === group.categoryId ? [node] : []
+      return node && (node.categoryId || 'shots') === group.categoryId ? [node] : []
     })
     if (!members.length) return []
     const minX = Math.min(...members.map((node) => node.position.x))
@@ -191,6 +191,11 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
   const copySelectedNodes = useGenerationCanvasStore((state) => state.copySelectedNodes)
   const cutSelectedNodes = useGenerationCanvasStore((state) => state.cutSelectedNodes)
   const pasteNodes = useGenerationCanvasStore((state) => state.pasteNodes)
+  const groupSelectedNodes = useGenerationCanvasStore((state) => state.groupSelectedNodes)
+  const ungroupGroups = useGenerationCanvasStore((state) => state.ungroupGroups)
+  const moveGroupNodes = useGenerationCanvasStore((state) => state.moveGroupNodes)
+  const captureHistory = useGenerationCanvasStore((state) => state.captureHistory)
+  const commitPersistedChange = useGenerationCanvasStore((state) => state.commitPersistedChange)
   const selectNodesInRect = useGenerationCanvasStore((state) => state.selectNodesInRect)
   const disconnectEdge = useGenerationCanvasStore((state) => state.disconnectEdge)
   const pendingConnectionSourceId = useGenerationCanvasStore((state) => state.pendingConnectionSourceId)
@@ -203,6 +208,13 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
   const nodeById = React.useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes])
   const selectedBounds = React.useMemo(() => getSelectedBounds(nodes, selectedNodeIds), [nodes, selectedNodeIds])
   const groupBoxes = React.useMemo(() => getCanvasGroupBoxes(groups, nodes), [groups, nodes])
+  const selectedGroupIds = React.useMemo(() => {
+    const selected = new Set(selectedNodeIds)
+    return groups
+      .filter((group) => group.nodeIds.some((nodeId) => selected.has(nodeId)))
+      .map((group) => group.id)
+  }, [groups, selectedNodeIds])
+  const draggingGroupRef = React.useRef<{ groupId: string; clientX: number; clientY: number; moved: boolean } | null>(null)
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   const [apiKey, setApiKey] = React.useState(() => readProviderSetting('apiKey'))
   const [baseUrl, setBaseUrl] = React.useState(() => readProviderSetting('baseUrl'))
@@ -340,6 +352,38 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
     }
   }, [])
 
+  React.useEffect(() => {
+    if (readOnly) return undefined
+    const handleMove = (event: PointerEvent) => {
+      const drag = draggingGroupRef.current
+      if (!drag) return
+      const scale = zoomRef.current || 1
+      const delta = {
+        x: (event.clientX - drag.clientX) / scale,
+        y: (event.clientY - drag.clientY) / scale,
+      }
+      if (delta.x === 0 && delta.y === 0) return
+      drag.clientX = event.clientX
+      drag.clientY = event.clientY
+      drag.moved = true
+      moveGroupNodes(drag.groupId, delta, { persist: false })
+    }
+    const handleUp = () => {
+      const drag = draggingGroupRef.current
+      if (!drag) return
+      draggingGroupRef.current = null
+      if (drag.moved) commitPersistedChange()
+    }
+    window.addEventListener('pointermove', handleMove)
+    window.addEventListener('pointerup', handleUp)
+    window.addEventListener('blur', handleUp)
+    return () => {
+      window.removeEventListener('pointermove', handleMove)
+      window.removeEventListener('pointerup', handleUp)
+      window.removeEventListener('blur', handleUp)
+    }
+  }, [commitPersistedChange, moveGroupNodes, readOnly])
+
   // Keep store zoom in sync so BaseGenerationNode can read it
   React.useEffect(() => {
     setCanvasZoom(zoom)
@@ -404,6 +448,31 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
     }
   }, [pendingConnectionSourceId, connectToNode, cancelConnection, readOnly])
 
+  const handleGroupSelectedNodes = React.useCallback(() => {
+    const group = groupSelectedNodes(activeCategoryId)
+    if (!group) return
+    toast(`已创建「${group.name}」`, 'success')
+  }, [activeCategoryId, groupSelectedNodes])
+
+  const handleUngroupSelectedNodes = React.useCallback(() => {
+    if (!selectedGroupIds.length) return
+    ungroupGroups(selectedGroupIds)
+    toast('已解组并保留节点', 'success')
+  }, [selectedGroupIds, ungroupGroups])
+
+  const handleGroupFramePointerDown = React.useCallback((event: React.PointerEvent<HTMLDivElement>, groupId: string) => {
+    if (readOnly || event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    captureHistory()
+    draggingGroupRef.current = {
+      groupId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      moved: false,
+    }
+  }, [captureHistory, readOnly])
+
   React.useEffect(() => {
     if (readOnly) return undefined
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -423,6 +492,18 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
         return
       }
       if (!mod) return
+      if (key === 'g' && event.shiftKey) {
+        if (!selectedGroupIds.length) return
+        event.preventDefault()
+        handleUngroupSelectedNodes()
+        return
+      }
+      if (key === 'g') {
+        if (selectedNodeIds.length < 2) return
+        event.preventDefault()
+        handleGroupSelectedNodes()
+        return
+      }
       if (key === 'c') {
         event.preventDefault()
         copySelectedNodes()
@@ -455,7 +536,20 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [cancelConnection, copySelectedNodes, cutSelectedNodes, deleteSelectedNodes, pasteNodes, readOnly, redo, selectedNodeIds.length, undo])
+  }, [
+    cancelConnection,
+    copySelectedNodes,
+    cutSelectedNodes,
+    deleteSelectedNodes,
+    handleGroupSelectedNodes,
+    handleUngroupSelectedNodes,
+    pasteNodes,
+    readOnly,
+    redo,
+    selectedGroupIds.length,
+    selectedNodeIds.length,
+    undo,
+  ])
 
   React.useEffect(() => {
     const handleOpenSettings = () => {
@@ -891,7 +985,7 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
               })()}
             </svg>
             <div className={cn('generation-canvas-v2__nodes', 'absolute top-0 left-0 w-[4000px] h-[3000px]')}>
-              <div className="generation-canvas-v2__group-boxes" aria-hidden="true">
+              <div className="generation-canvas-v2__group-boxes">
                 {groupBoxes.map((box) => {
                   const groupColor = box.group.color || undefined
                   return (
@@ -906,8 +1000,16 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
                         borderColor: groupColor,
                         backgroundColor: getHexAlphaColor(groupColor, '18'),
                       }}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`拖动分组「${box.group.name}」`}
+                      title="拖动分组"
+                      onPointerDown={(event) => handleGroupFramePointerDown(event, box.group.id)}
                     >
-                      <div className="generation-canvas-v2__group-box-label" style={{ backgroundColor: groupColor }}>
+                      <div
+                        className="generation-canvas-v2__group-box-label"
+                        style={{ backgroundColor: groupColor }}
+                      >
                         <span>{box.group.name}</span>
                         <span>{box.memberCount}</span>
                       </div>
@@ -939,6 +1041,7 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
                 onPointerDown={(event) => event.stopPropagation()}
               >
                 <span className={cn('px-[6px] text-nomi-ink-60 text-[11px] whitespace-nowrap')}>{selectedCount} 个节点</span>
+                <WorkbenchIconButton label="创建分组 (⌘G)" icon={<IconFolderPlus size={14} />} onClick={handleGroupSelectedNodes} />
                 <WorkbenchIconButton label="复制选中节点" icon={<IconCopy size={14} />} onClick={copySelectedNodes} />
                 <WorkbenchIconButton label="剪切选中节点" icon={<IconCut size={14} />} onClick={cutSelectedNodes} />
                 <WorkbenchIconButton label="清除选择" icon={<IconX size={14} />} onClick={clearSelection} />

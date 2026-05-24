@@ -83,6 +83,7 @@ type GenerationCanvasState = {
   updateNodePrompt: (nodeId: string, prompt: string) => void
   moveNode: (nodeId: string, position: { x: number; y: number }, options?: CanvasMutationOptions) => void
   moveSelectedNodes: (delta: { x: number; y: number }, options?: CanvasMutationOptions) => void
+  moveGroupNodes: (groupId: string, delta: { x: number; y: number }, options?: CanvasMutationOptions) => void
   selectNodesInRect: (rect: GenerationCanvasSelectionRect, additive?: boolean) => void
   deleteSelectedNodes: () => void
   copySelectedNodes: () => void
@@ -109,9 +110,11 @@ type GenerationCanvasState = {
   copyNodeToCategory: (nodeId: string, categoryId: string) => GenerationCanvasNode | null
   deleteNode: (nodeId: string) => void
   createGroup: (categoryId: string, name?: string) => NodeGroup | null
+  groupSelectedNodes: (categoryId: string, name?: string) => NodeGroup | null
   renameGroup: (groupId: string, name: string) => void
   setGroupColor: (groupId: string, color: string) => void
   ungroup: (groupId: string) => void
+  ungroupGroups: (groupIds: string[]) => void
   deleteGroup: (groupId: string, deleteNodes?: boolean) => void
   moveNodeToGroup: (nodeId: string, groupId: string) => void
   removeNodeFromGroup: (nodeId: string) => void
@@ -484,6 +487,26 @@ export const useGenerationCanvasStore = create<GenerationCanvasState>()(subscrib
         moved = true
       }
       if (moved && shouldPersistCanvasMutation(options)) bumpPersistRevision(state)
+    })
+  },
+  moveGroupNodes: (groupId, delta, options) => {
+    set((state) => {
+      if (delta.x === 0 && delta.y === 0) return
+      const group = state.groups.find((candidate) => candidate.id === groupId)
+      if (!group?.nodeIds.length) return
+      const nodeIds = new Set(group.nodeIds)
+      let moved = false
+      for (const node of state.nodes) {
+        if (!nodeIds.has(node.id) || (node.categoryId || 'shots') !== group.categoryId) continue
+        node.position = {
+          x: Math.round(node.position.x + delta.x),
+          y: Math.round(node.position.y + delta.y),
+        }
+        moved = true
+      }
+      if (!moved) return
+      group.updatedAt = Date.now()
+      if (shouldPersistCanvasMutation(options)) bumpPersistRevision(state)
     })
   },
   selectNodesInRect: (rect, additive = false) => {
@@ -894,6 +917,40 @@ export const useGenerationCanvasStore = create<GenerationCanvasState>()(subscrib
     })
     return group
   },
+  groupSelectedNodes: (categoryId, name) => {
+    const id = String(categoryId || '').trim()
+    if (!isCategoryId(id)) return null
+    const current = get()
+    const selected = new Set(current.selectedNodeIds)
+    const nodeIds = current.nodes
+      .filter((node) => selected.has(node.id) && (node.categoryId || 'shots') === id)
+      .map((node) => node.id)
+    if (nodeIds.length < 2) return null
+    const now = Date.now()
+    const existingCount = current.groups.filter((group) => group.categoryId === id).length
+    const group: NodeGroup = {
+      id: createGroupId(id),
+      name: (name || '').trim() || `组 ${existingCount + 1}`,
+      categoryId: id,
+      nodeIds,
+      createdAt: now,
+      updatedAt: now,
+    }
+    pushUndoSnapshot(current)
+    set((state) => {
+      for (const existingGroup of state.groups) {
+        existingGroup.nodeIds = existingGroup.nodeIds.filter((nodeId) => !nodeIds.includes(nodeId))
+      }
+      for (const node of state.nodes) {
+        if (nodeIds.includes(node.id)) node.groupId = group.id
+      }
+      state.groups.push(group)
+      state.selectedNodeIds = nodeIds
+      bumpPersistRevision(state)
+      Object.assign(state, getHistoryFlags())
+    })
+    return group
+  },
   renameGroup: (groupId, name) => {
     const nextName = String(name || '').trim()
     if (!nextName) return
@@ -939,6 +996,25 @@ export const useGenerationCanvasStore = create<GenerationCanvasState>()(subscrib
         if (nodeIds.has(node.id)) delete node.groupId
       }
       state.groups = state.groups.filter((candidate) => candidate.id !== groupId)
+      bumpPersistRevision(state)
+      Object.assign(state, getHistoryFlags())
+    })
+  },
+  ungroupGroups: (groupIds) => {
+    const current = get()
+    const targets = new Set(groupIds)
+    if (!targets.size || !current.groups.some((group) => targets.has(group.id))) return
+    pushUndoSnapshot(current)
+    set((state) => {
+      const nodeIds = new Set<string>()
+      for (const group of state.groups) {
+        if (!targets.has(group.id)) continue
+        group.nodeIds.forEach((nodeId) => nodeIds.add(nodeId))
+      }
+      for (const node of state.nodes) {
+        if (nodeIds.has(node.id)) delete node.groupId
+      }
+      state.groups = state.groups.filter((candidate) => !targets.has(candidate.id))
       bumpPersistRevision(state)
       Object.assign(state, getHistoryFlags())
     })
