@@ -1,6 +1,7 @@
 import React from 'react'
 import { IconGitBranch, IconGripVertical, IconGrid3x3, IconInfoCircle, IconLayoutGrid, IconMaximize, IconUpload } from '@tabler/icons-react'
 import ProvenancePanel from './ProvenancePanel'
+import TitlePill from './TitlePill'
 import { cn } from '../../../utils/cn'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { useWorkbenchStore } from '../../workbenchStore'
@@ -826,6 +827,7 @@ export default function BaseGenerationNode({ node, selected, readOnly = false, f
         'flex items-center justify-start gap-2 min-h-0 p-0',
         'pointer-events-auto cursor-grab',
       )}>
+        <TitlePill node={node} />
         {showStatusBadge ? (
           <span
             className={cn(
