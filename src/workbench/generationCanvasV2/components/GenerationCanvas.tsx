@@ -13,6 +13,7 @@ import { getGenerationNodeComponent } from '../nodes/renderRegistry'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { notifyModelOptionsRefresh, useModelOptionsState } from '../../../config/useModelOptions'
 import { useWorkbenchStore } from '../../workbenchStore'
+import { GroupFrameList, type CanvasGroupBox } from './GroupFrame'
 import '../styles/generationCanvas.css'
 
 const GENERATION_PROVIDER = 'chatfire'
@@ -73,17 +74,6 @@ function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-function getHexAlphaColor(color: string | undefined, alphaHex: string): string | undefined {
-  const normalized = color?.trim()
-  if (!normalized) return undefined
-  if (/^#[0-9a-fA-F]{6}$/.test(normalized)) return `${normalized}${alphaHex}`
-  if (/^#[0-9a-fA-F]{3}$/.test(normalized)) {
-    const [, r, g, b] = normalized
-    return `#${r}${r}${g}${g}${b}${b}${alphaHex}`
-  }
-  return undefined
-}
-
 function getWheelZoomFactor(event: React.WheelEvent): number {
   const deltaModeMultiplier = event.deltaMode === 1
     ? WHEEL_LINE_HEIGHT
@@ -135,15 +125,6 @@ function centerNodeOffset(node: GenerationCanvasNode, stageSize: { width: number
     x: Math.round(stageSize.width / 2 - (node.position.x + size.width / 2) * zoom),
     y: Math.round(stageSize.height / 2 - (node.position.y + size.height / 2) * zoom),
   }
-}
-
-type CanvasGroupBox = {
-  group: NodeGroup
-  left: number
-  top: number
-  width: number
-  height: number
-  memberCount: number
 }
 
 function getCanvasGroupBoxes(groups: readonly NodeGroup[], nodes: readonly GenerationCanvasNode[]): CanvasGroupBox[] {
@@ -1027,38 +1008,8 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
               })()}
             </svg>
             <div className={cn('generation-canvas-v2__nodes', 'absolute top-0 left-0 w-[4000px] h-[3000px]')}>
-              <div className="generation-canvas-v2__group-boxes">
-                {groupBoxes.map((box) => {
-                  const groupColor = box.group.color || undefined
-                  return (
-                    <div
-                      key={box.group.id}
-                      className="generation-canvas-v2__group-box"
-                      style={{
-                        left: box.left,
-                        top: box.top,
-                        width: box.width,
-                        height: box.height,
-                        borderColor: groupColor,
-                        backgroundColor: getHexAlphaColor(groupColor, '18'),
-                      }}
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`拖动分组「${box.group.name}」`}
-                      title="拖动分组"
-                      onPointerDown={(event) => handleGroupFramePointerDown(event, box.group.id)}
-                    >
-                      <div
-                        className="generation-canvas-v2__group-box-label"
-                        style={{ backgroundColor: groupColor }}
-                      >
-                        <span>{box.group.name}</span>
-                        <span>{box.memberCount}</span>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
+              {/* E.2C-30: GroupFrame 抽离为独立组件 */}
+              <GroupFrameList boxes={groupBoxes} onPointerDown={handleGroupFramePointerDown} />
               <React.Suspense fallback={null}>
                 {visibleNodesForRender.map((node) => {
                   const NodeComponent = getGenerationNodeComponent(node.kind)

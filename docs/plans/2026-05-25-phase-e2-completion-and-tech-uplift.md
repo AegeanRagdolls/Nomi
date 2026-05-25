@@ -862,8 +862,8 @@ export const iconsByName = {
 
 ## 10. 进度跟踪
 
-**有效进度**: 14 / 18 tasks (78%)（W2 5 个分离组件 over-engineered，简化合并；W0 升级 → E.3）
-**当前 Wave**: ✅ W3 完成，准备进 W4
+**有效进度**: 15 / 18 tasks (83%)（W2 5 个分离组件 over-engineered，简化合并；W0 升级 → E.3）
+**当前 Wave**: ✅ W4 完成，准备进 W5
 **当前 Wave**: 🚧 W3 进行中
 **最后更新**: 2026-05-25
 
@@ -898,7 +898,7 @@ export const iconsByName = {
 | W3 | E.2C-27 | 自动编号 | ✓ | pending |
 | W3 | E.2C-28 | 占位态视觉 | ✓ | pending |
 | W4 | E.2C-29 | Sidebar 挂载下沉 | ✓ | pending |
-| W4 | E.2C-30 | GroupFrame 抽离 | ⏸ | - |
+| W4 | E.2C-30 | GroupFrame 抽离 | ✓ | pending |
 | W5 | E.2C-31 | 单元测试补全 | ⏸ | - |
 | W5 | E.2C-32 | 集成测试 | ⏸ | - |
 | W5 | E.2C-33 | 版本 0.6.0 + release notes | ⏸ | - |
