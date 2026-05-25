@@ -862,8 +862,8 @@ export const iconsByName = {
 
 ## 10. 进度跟踪
 
-**有效进度**: 1 / 23 tasks (4%)（W0 升级类整批 → Phase E.3，不计入本 Phase）
-**当前 Wave**: 🟢 W0 收尾，准备进 W1
+**有效进度**: 2 / 23 tasks (9%)（W0 升级类整批 → Phase E.3，不计入本 Phase）
+**当前 Wave**: 🚧 W1 进行中
 **最后更新**: 2026-05-25
 
 | Wave | Task | 主题 | 状态 | Commit |
@@ -880,7 +880,7 @@ export const iconsByName = {
 | ~~W0~~ | E.2C-10 | Electron 33 minor | → Phase E.3 | - |
 | W3 | E.2C-11 | 删除 lucide-react（并入 W3 视觉打磨）| ⏸ | - |
 | ~~W0~~ | E.2C-12 | 持久化层抽象 | → Phase E.3 | - |
-| W1 | E.2C-13 | 删除 viewType 系统 | ⏸ | - |
+| W1 | E.2C-13 | 删除 viewType 系统 | ✓ | pending |
 | W1 | E.2C-14 | NodeRenderKind + Tabler 图标映射 | ⏸ | - |
 | W1 | E.2C-15 | Node 类型扩展（renderKind / regeneratedFrom / shotIndex）| ⏸ | - |
 | W1 | E.2C-16 | Migration v51→v60 | ⏸ | - |

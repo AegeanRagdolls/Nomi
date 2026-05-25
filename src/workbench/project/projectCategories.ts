@@ -1,15 +1,8 @@
 import { z } from 'zod'
 
-export const CATEGORY_VIEW_TYPES = [
-  'document',
-  'card-grid',
-  'graph-canvas',
-  'asset-library',
-  'list-with-status',
-  'audio-list',
-] as const
-
-export type CategoryViewType = (typeof CATEGORY_VIEW_TYPES)[number]
+// viewType 系统已删除 (E.2C-13)：5 个分类全部基于同一画布底座，
+// 仅节点渲染样式按分类不同。详见 docs/plans/2026-05-25-phase-e2-completion-and-tech-uplift.md §3 决策 4。
+// 节点渲染分发改由 NodeRenderKind 处理（见 E.2C-14/15）。
 
 export type ProjectCategory = {
   id: string
@@ -17,7 +10,6 @@ export type ProjectCategory = {
   icon: string
   color?: string
   order: number
-  viewType: CategoryViewType
   isBuiltin: boolean
   isHidden?: boolean
 }
@@ -33,11 +25,11 @@ export const BUILTIN_CATEGORY_IDS = [
 export type BuiltinCategoryId = (typeof BUILTIN_CATEGORY_IDS)[number]
 
 export const BUILTIN_CATEGORIES: ProjectCategory[] = [
-  { id: 'shots', name: '分镜', icon: '🎬', order: 1, viewType: 'graph-canvas', isBuiltin: true },
-  { id: 'cast', name: '角色', icon: '👥', order: 2, viewType: 'card-grid', isBuiltin: true },
-  { id: 'scene', name: '场景', icon: '🌍', order: 3, viewType: 'card-grid', isBuiltin: true },
-  { id: 'prop', name: '道具', icon: '🧰', order: 4, viewType: 'card-grid', isBuiltin: true },
-  { id: 'audio', name: '声音', icon: '🎵', order: 5, viewType: 'audio-list', isBuiltin: true },
+  { id: 'shots', name: '分镜', icon: '🎬', order: 1, isBuiltin: true },
+  { id: 'cast', name: '角色', icon: '👥', order: 2, isBuiltin: true },
+  { id: 'scene', name: '场景', icon: '🌍', order: 3, isBuiltin: true },
+  { id: 'prop', name: '道具', icon: '🧰', order: 4, isBuiltin: true },
+  { id: 'audio', name: '声音', icon: '🎵', order: 5, isBuiltin: true },
 ]
 
 export const DEFAULT_CATEGORY_ID: BuiltinCategoryId = 'shots'
@@ -49,7 +41,6 @@ export const projectCategorySchema = z.object({
   icon: z.string(),
   color: z.string().optional(),
   order: z.number().finite(),
-  viewType: z.enum(CATEGORY_VIEW_TYPES),
   isBuiltin: z.boolean(),
   isHidden: z.boolean().optional(),
 })

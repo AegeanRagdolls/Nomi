@@ -13,7 +13,6 @@ import { getGenerationNodeComponent } from '../nodes/renderRegistry'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
 import { notifyModelOptionsRefresh, useModelOptionsState } from '../../../config/useModelOptions'
 import { useWorkbenchStore } from '../../workbenchStore'
-import { getBuiltinCategoryById } from '../../project/projectCategories'
 import '../styles/generationCanvas.css'
 
 const GENERATION_PROVIDER = 'chatfire'
@@ -831,31 +830,8 @@ export default function GenerationCanvas({ readOnly = false }: GenerationCanvasP
   const zoomPercent = Math.round(zoom * 100)
   const selectedCount = selectedNodeIds.length
 
-  // Phase E3: when a non-graph category is active, render a placeholder
-  // instead of the graph canvas. Real subviews ship in Phase F.
-  const activeCategory = getBuiltinCategoryById(activeCategoryId)
-  if (activeCategory && activeCategory.viewType !== 'graph-canvas') {
-    return (
-      <section
-        className={cn(
-          'generation-canvas-v2',
-          'grid place-items-center w-full h-full min-w-0 min-h-0 bg-[#f7f7f9] text-workbench-ink',
-        )}
-        aria-label={`${activeCategory.name} 子画布`}
-        data-ready="true"
-        data-category-id={activeCategory.id}
-        data-view-type={activeCategory.viewType}
-      >
-        <div className={cn('flex flex-col items-center gap-3 px-8 py-10', 'animate-[fadeIn_180ms_ease-out]')}>
-          <div className="text-[48px] leading-none" aria-hidden>{activeCategory.icon}</div>
-          <div className="text-[15px] font-medium text-nomi-ink">{activeCategory.name} 子画布开发中</div>
-          <div className="text-[12px] text-nomi-ink-40 max-w-[300px] text-center">
-            Phase F 落地：{activeCategory.viewType === 'document' ? '故事编辑器' : activeCategory.viewType === 'card-grid' ? '卡片网格' : activeCategory.viewType === 'asset-library' ? '资产库视图' : activeCategory.viewType === 'audio-list' ? '音频列表' : '导出列表'}
-          </div>
-        </div>
-      </section>
-    )
-  }
+  // E.2C-13: 删除 viewType 分支。5 个分类全部走同一画布底座。
+  // 节点渲染样式差异由 NodeRenderKind 分发（E.2C-14/15+ 实现）。
 
   return (
     <section
