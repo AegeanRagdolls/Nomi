@@ -76,16 +76,18 @@ export function UploadFallback({
     },
     [onUpload],
   )
+  // v0.7.3 fix: 不 stopPropagation onPointerDown — 否则空卡片没法拖动。
+  // drag threshold (2px) 保证短按弹文件框、长按拖动不冲突。
+  // 但要拦 click 防止点 label 立刻弹文件框时也触发 selectNode 之外的副作用。
   return (
     <label
       className={cn(
         'flex flex-col items-center justify-center w-full h-full gap-1 cursor-pointer',
         'text-nomi-ink-60 hover:text-nomi-ink hover:bg-nomi-ink-05/50 transition-colors',
       )}
-      onPointerDown={(event) => event.stopPropagation()}
     >
-      <span className="text-[13px] font-medium tabular-nums">+ 上传{label}</span>
-      <span className="text-[11px] text-nomi-ink-40">或选中后输入提示词生成</span>
+      <span className="text-[13px] font-medium tabular-nums pointer-events-none">+ 上传{label}</span>
+      <span className="text-[11px] text-nomi-ink-40 pointer-events-none">或选中后输入提示词生成</span>
       <input className="hidden" type="file" accept={accept} onChange={handleChange} />
     </label>
   )

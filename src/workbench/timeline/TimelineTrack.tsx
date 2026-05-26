@@ -10,6 +10,7 @@ import {
 } from './timelineDragPayload'
 import TimelineClip from './TimelineClip'
 import type { TimelineTrack as TimelineTrackData } from './timelineTypes'
+import { getTrackTypeForClipType } from './timelineTypes'
 import { toast } from '../../ui/toast'
 
 type TimelineTrackProps = {
@@ -57,7 +58,9 @@ export default function TimelineTrack({ track }: TimelineTrackProps): JSX.Elemen
       toast(preview.reason || '这里暂时不能放置素材', 'warning')
       return
     }
-    addTimelineClipAtFrame(preview.clip, preview.clip.type, preview.startFrame)
+    // v0.7.3 fix: clip.type 是 'image' | 'video' | 'audio'，trackType 是 'image' | 'video'
+    // audio clip 落到 video 轨；image/video 直传
+    addTimelineClipAtFrame(preview.clip, getTrackTypeForClipType(preview.clip.type), preview.startFrame)
   }, [addTimelineClipAtFrame, dragPreview, resolveDropPreview])
 
   return (

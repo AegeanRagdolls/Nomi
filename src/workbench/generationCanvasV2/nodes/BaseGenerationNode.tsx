@@ -179,10 +179,21 @@ async function splitImageIntoGrid(url: string, gridSize: ImageGridSize): Promise
 }
 
 function findTimelineDropTarget(clientX: number, clientY: number): HTMLElement | null {
-  if (typeof document.elementFromPoint !== 'function') return null
+  // v0.7.3 fix: elementsFromPoint (plural) 返回所有重叠元素，
+  // 跳过被拖动的卡片本身（topmost）找下方的时间轴。
+  // 单数版 elementFromPoint 只返回最顶层，拖动时永远是被拖卡片，永远找不到 timeline。
+  if (typeof document.elementsFromPoint === 'function') {
+    const elements = document.elementsFromPoint(clientX, clientY)
+    for (const el of elements) {
+      const target = el.closest(TIMELINE_TRACK_CLIPS_SELECTOR)
+      if (target instanceof HTMLElement) return target
+    }
+    return null
+  }
+  // 兜底：老浏览器
   const element = document.elementFromPoint(clientX, clientY)
   if (!element) return null
-  return element.closest(TIMELINE_TRACK_CLIPS_SELECTOR)
+  return element.closest(TIMELINE_TRACK_CLIPS_SELECTOR) as HTMLElement | null
 }
 
 function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash = false }: BaseGenerationNodeProps): JSX.Element {

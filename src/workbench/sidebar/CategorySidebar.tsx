@@ -143,6 +143,9 @@ export default function CategorySidebar({ categories }: Props): JSX.Element {
 
   const handleSelectNode = React.useCallback((nodeId: string) => {
     selectNode(nodeId)
+    // v0.7.3 fix: 派发 focus 事件，让 canvas 切换到目标分类 + pan/zoom 到该节点
+    // 这跟"独立副本定位源节点"用的是同一个机制（GenerationCanvas 监听 nomi-focus-generation-node）
+    window.dispatchEvent(new CustomEvent('nomi-focus-generation-node', { detail: { nodeId } }))
   }, [selectNode])
 
   const handleDropNodeOnCategory = React.useCallback((nodeId: string, categoryId: string) => {

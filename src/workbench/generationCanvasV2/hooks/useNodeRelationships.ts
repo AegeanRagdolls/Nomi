@@ -22,18 +22,20 @@ function buildUsageMap(nodes: readonly GenerationCanvasNode[]): UsageMap {
   const cached = usageCache.get(nodes)
   if (cached) return cached
 
-  // 收集所有非空 title
-  const titles: string[] = []
+  // v0.7.3 fix: 用 Set 去重 title — 多张同名卡片（如默认"图片"）会让同一 shot 被重复推入桶
+  // 导致 count 远超真实命中数（用户报告 26 shots 显示 36 即此问题）
+  const titleSet = new Set<string>()
   for (const node of nodes) {
     if (node.title && node.title.trim()) {
-      titles.push(node.title.trim())
+      titleSet.add(node.title.trim())
     }
   }
+  const titles = Array.from(titleSet)
 
   const map: UsageMap = new Map()
   for (const t of titles) map.set(t, [])
 
-  // 扫描每个 shots 节点的 prompt，记录命中 title 的 shot id
+  // 扫描每个 shots 节点的 prompt，每个 (shot, title) 组合最多记一次
   for (const shot of nodes) {
     if (shot.categoryId !== 'shots') continue
     const prompt = typeof shot.prompt === 'string' ? shot.prompt : ''
