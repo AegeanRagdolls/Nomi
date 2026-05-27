@@ -15,6 +15,7 @@ import { readAudioMeta, AUDIO_KIND_LABELS } from '../../model/nodeMetaFields'
 import { useNodeUsageCount } from '../../hooks/useNodeRelationships'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
 import { UsageDot } from './CardCommon'
+import { getDisplayTitle } from '../../model/titleHeuristics'
 
 type Props = {
   node: GenerationCanvasNode
@@ -160,7 +161,7 @@ function AudioStripNodeImpl({ node }: Props): JSX.Element {
           </span>
         ) : null}
         <span className="text-[14px] text-nomi-ink truncate" title={node.title}>
-          {node.title || '未命名'}
+          {getDisplayTitle(node.title, '声音')}
         </span>
       </div>
 

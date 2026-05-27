@@ -11,6 +11,7 @@ import { readPropMeta } from '../../model/nodeMetaFields'
 import { useNodeUsageCount } from '../../hooks/useNodeRelationships'
 import { STRIPED_BG_CLASS, UsageDot, UploadFallback } from './CardCommon'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
+import { getDisplayTitle } from '../../model/titleHeuristics'
 
 type Props = {
   node: GenerationCanvasNode
@@ -46,7 +47,7 @@ function PropCardNodeImpl({ node }: Props): JSX.Element {
       <div className="shrink-0 h-[60px] px-3 py-2 flex flex-col gap-1">
         <div className="flex items-center justify-between gap-2">
           <span className="text-[14px] font-medium text-nomi-ink truncate" title={node.title}>
-            {node.title || '未命名'}
+            {getDisplayTitle(node.title, '道具')}
           </span>
           <UsageDot count={usageCount} />
         </div>

@@ -11,6 +11,7 @@ import { readSceneMeta } from '../../model/nodeMetaFields'
 import { useNodeUsageCount, useNodeVariantCount } from '../../hooks/useNodeRelationships'
 import { STRIPED_BG_CLASS, UsageDot, VariantChip, UploadFallback } from './CardCommon'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
+import { getDisplayTitle } from '../../model/titleHeuristics'
 
 type Props = {
   node: GenerationCanvasNode
@@ -58,7 +59,7 @@ function SceneCardNodeImpl({ node }: Props): JSX.Element {
       >
         <div className="flex items-center justify-between gap-2">
           <span className="text-[14px] font-medium truncate" title={node.title}>
-            {node.title || '未命名'}
+            {getDisplayTitle(node.title, '场景')}
           </span>
           <span className="flex items-center gap-1">
             <UsageDot count={usageCount} />

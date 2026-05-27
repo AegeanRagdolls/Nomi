@@ -15,6 +15,7 @@ import { readCharacterMeta } from '../../model/nodeMetaFields'
 import { useNodeUsageCount, useNodeVariantCount } from '../../hooks/useNodeRelationships'
 import { STRIPED_BG_CLASS, UsageDot, VariantChip, UploadFallback } from './CardCommon'
 import { useGenerationCanvasStore } from '../../store/generationCanvasStore'
+import { getDisplayTitle } from '../../model/titleHeuristics'
 
 type Props = {
   node: GenerationCanvasNode
@@ -52,10 +53,10 @@ function CharacterCardNodeImpl({ node }: Props): JSX.Element {
 
       {/* 信息区 — 固定 80px */}
       <div className="shrink-0 h-[80px] px-3 py-2 flex flex-col gap-1">
-        {/* 第一行：名字 + 使用计数 */}
+        {/* 第一行：名字 + 使用计数（v0.7.7: hash 文件名走 fallback） */}
         <div className="flex items-center justify-between gap-2">
           <span className="text-[14px] font-medium text-nomi-ink truncate" title={node.title}>
-            {node.title || '未命名'}
+            {getDisplayTitle(node.title, '角色')}
           </span>
           <UsageDot count={usageCount} />
         </div>
