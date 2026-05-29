@@ -18,9 +18,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aqm857886159/Nomi/releases/latest"><img src="https://img.shields.io/github/v/release/aqm857886159/Nomi?style=for-the-badge&label=Download&logo=electron&logoColor=white" alt="Download" /></a>
-  <a href="https://github.com/aqm857886159/Nomi/stargazers"><img src="https://img.shields.io/github/stars/aqm857886159/Nomi?style=for-the-badge&logo=github" alt="GitHub stars" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue?style=for-the-badge" alt="License" /></a>
+  <a href="https://github.com/aqm857886159/Nomi/releases/latest"><strong>⬇️ 下载最新版</strong></a>
+  ·
+  <a href="https://github.com/aqm857886159/Nomi/stargazers">⭐ Star 支持一下</a>
+  ·
+  <a href="LICENSE">Apache-2.0 License</a>
 </p>
 
 ---
