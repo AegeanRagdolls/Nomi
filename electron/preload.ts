@@ -63,6 +63,21 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
       };
     },
   },
+  onboarding: {
+    start: (payload: unknown) =>
+      ipcRenderer.invoke("nomi:onboarding:start", payload) as Promise<{ trialId: string }>,
+    cancel: (trialId: string) =>
+      ipcRenderer.invoke("nomi:onboarding:cancel", { trialId }),
+    onEvent: (trialId: string, callback: (event: unknown) => void) => {
+      const listener = (_event: unknown, payload: { trialId: string; event: unknown }) => {
+        if (payload && payload.trialId === trialId) callback(payload.event);
+      };
+      ipcRenderer.on("nomi:onboarding:event", listener as never);
+      return () => {
+        ipcRenderer.removeListener("nomi:onboarding:event", listener as never);
+      };
+    },
+  },
   modelCatalog: {
     listVendors: () => invokeSync("nomi:model-catalog:vendors:list"),
     listModels: (params?: unknown) => invokeSync("nomi:model-catalog:models:list", params),

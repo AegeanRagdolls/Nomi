@@ -39,8 +39,11 @@ import {
   upsertModelCatalogVendor,
   upsertModelCatalogVendorApiKey,
   clearModelCatalogVendorApiKey,
+  commitOnboardedModelToCatalog,
   readProjectCostSummary,
 } from "./runtime";
+import { runOnboardingTrial } from "./ai/onboarding/agent";
+import type { ProviderKind, ModelKind } from "./ai/onboarding/types";
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -216,6 +219,7 @@ function registerIpc(): void {
   ipcMain.handle("nomi:tasks:result", (_event, payload) => fetchTaskResult(payload));
   ipcMain.handle("nomi:agents:chat", (_event, payload) => runAgentChat(payload));
   registerAgentChatV2Ipc();
+  registerOnboardingIpc();
 }
 
 function registerExportJobEventForwarding(contents: WebContents): void {
@@ -328,6 +332,97 @@ function registerAgentChatV2Ipc(): void {
       pending.resolve({ ok: false, message: "session cancelled" });
       session.pendingConfirmations.delete(toolCallId);
     }
+    return { ok: true };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Onboarding (M5.4) — IPC bridge for the Wizard UI
+// ---------------------------------------------------------------------------
+
+type OnboardingSession = {
+  trialId: string;
+  webContentsId: number;
+  cancelled: boolean;
+};
+
+const onboardingSessions = new Map<string, OnboardingSession>();
+
+function sendOnboardingEvent(session: OnboardingSession, event: unknown): void {
+  const target: WebContents | undefined = electronWebContents.fromId(session.webContentsId) || undefined;
+  if (!target || target.isDestroyed()) return;
+  target.send("nomi:onboarding:event", { trialId: session.trialId, event });
+}
+
+function registerOnboardingIpc(): void {
+  ipcMain.handle("nomi:onboarding:start", async (event, payload: Record<string, unknown>) => {
+    const docsUrl = String(payload?.docsUrl || "").trim();
+    const userApiKey = String(payload?.userApiKey || "").trim();
+    if (!docsUrl) throw new Error("docsUrl required");
+    if (!userApiKey) throw new Error("userApiKey required");
+
+    const agentConfig = (payload?.agent || {}) as Record<string, unknown>;
+    const agent = {
+      providerKind: String(agentConfig.providerKind || "openai-compatible") as ProviderKind,
+      baseUrl: String(agentConfig.baseUrl || ""),
+      modelId: String(agentConfig.modelId || ""),
+      apiKey: String(agentConfig.apiKey || ""),
+    };
+    if (!agent.baseUrl || !agent.modelId || !agent.apiKey) {
+      throw new Error("agent.baseUrl + agent.modelId + agent.apiKey required");
+    }
+
+    // Optional target kind hint; if absent, the agent infers from the docs.
+    const targetKind = (payload?.targetKind as ModelKind) || undefined;
+
+    const trialId = `onboard-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const session: OnboardingSession = { trialId, webContentsId: event.sender.id, cancelled: false };
+    onboardingSessions.set(trialId, session);
+
+    queueMicrotask(() => {
+      void runOnboardingTrial({
+        trialId,
+        docsUrl,
+        targetKind: targetKind ?? ("image" as ModelKind), // fallback until set_model_kind tool lands
+        userApiKey,
+        agent,
+        maxSteps: Number(payload?.maxSteps) || 10,
+        onEvent: (evt) => sendOnboardingEvent(session, evt),
+      })
+        .then((outcome) => {
+          // Auto-commit on success so the wizard's "success" event already shows the persisted model.
+          let committedModel: unknown = null;
+          if (outcome.status === "success") {
+            try {
+              committedModel = commitOnboardedModelToCatalog({ outcome, userApiKey });
+            } catch (e) {
+              const message = e instanceof Error ? e.message : String(e);
+              sendOnboardingEvent(session, { type: "commit-error", message });
+            }
+          }
+          sendOnboardingEvent(session, { type: "result", outcome, committedModel });
+          sendOnboardingEvent(session, { type: "done", reason: "finished" });
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          sendOnboardingEvent(session, { type: "error", message });
+          sendOnboardingEvent(session, { type: "done", reason: "error" });
+        })
+        .finally(() => {
+          onboardingSessions.delete(trialId);
+        });
+    });
+
+    return { trialId };
+  });
+
+  ipcMain.handle("nomi:onboarding:cancel", async (_event, payload: { trialId: string }) => {
+    const session = onboardingSessions.get(payload.trialId);
+    if (!session) return { ok: false, error: "session not found" };
+    // True cancellation requires plumbing AbortSignal through generateText.
+    // For now flag the session; the next "done" emit will see cancelled=true.
+    session.cancelled = true;
+    sendOnboardingEvent(session, { type: "cancelled" });
     return { ok: true };
   });
 }

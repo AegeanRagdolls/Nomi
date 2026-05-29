@@ -1112,6 +1112,120 @@ export function clearModelCatalogVendorApiKey(vendorKey: string): unknown {
   return { vendorKey: key, hasApiKey: false, enabled: false, createdAt: t, updatedAt: t };
 }
 
+/**
+ * Commit a successful onboarding trial into the local catalog as a real entry:
+ * vendor + encrypted apiKey + model (with evidence) + create/query mappings.
+ *
+ * Designed to be called from the renderer once a TrialOutcome arrives with
+ * status === "success". Returns the persisted Model so the caller can light up
+ * the success UI.
+ */
+export function commitOnboardedModelToCatalog(payload: {
+  outcome: unknown;
+  userApiKey: string;
+  /** Optional display label override; otherwise we use draft.modelDisplayName. */
+  displayLabel?: string;
+}): Model {
+  const outcome = payload?.outcome as JsonRecord | null;
+  if (!outcome || typeof outcome !== "object") throw new Error("outcome required");
+  const draft = (outcome as JsonRecord).draft as JsonRecord | null;
+  if (!draft) throw new Error("outcome.draft missing");
+
+  const vendorKey = String(draft.vendorKey || "").trim();
+  const vendorName = String(draft.vendorName || vendorKey).trim();
+  const vendorBaseUrl = String(draft.vendorBaseUrl || "").trim();
+  const modelKey = String(draft.modelKey || "").trim();
+  const modelDisplayName = String(payload.displayLabel || draft.modelDisplayName || modelKey).trim();
+  const targetKind = String(draft.targetKind || "").trim();
+  const userApiKey = String(payload.userApiKey || "").trim();
+
+  if (!vendorKey || !vendorBaseUrl || !modelKey) {
+    throw new Error("incomplete draft: vendorKey + vendorBaseUrl + modelKey are required");
+  }
+  if (!userApiKey) throw new Error("userApiKey required to commit a model");
+
+  // Audio not yet in BillingModelKind — accept up to image/video/text only.
+  let billingKind: BillingModelKind;
+  let taskKind: ProfileKind;
+  if (targetKind === "text") { billingKind = "text"; taskKind = "chat"; }
+  else if (targetKind === "image") { billingKind = "image"; taskKind = "text_to_image"; }
+  else if (targetKind === "video") { billingKind = "video"; taskKind = "text_to_video"; }
+  else throw new Error(`Unsupported model kind '${targetKind}' (audio support pending in catalog)`);
+
+  const auth = (draft.vendorAuth || {}) as JsonRecord;
+  const authType = (auth.type as Vendor["authType"]) || "bearer";
+
+  // 1. vendor
+  upsertModelCatalogVendor({
+    key: vendorKey,
+    name: vendorName,
+    baseUrlHint: vendorBaseUrl,
+    authType,
+    authHeader: auth.headerName || null,
+    authQueryParam: auth.queryParam || null,
+    providerKind: draft.vendorProviderKind || "openai-compatible",
+    enabled: true,
+  });
+
+  // 2. apiKey (auto-encrypted by upsert)
+  upsertModelCatalogVendorApiKey(vendorKey, { apiKey: userApiKey, enabled: true });
+
+  // 3. model + onboarding evidence snapshot
+  type OnboardingField = NonNullable<Model["onboarding"]>["fields"][number];
+  const onboardingFields: OnboardingField[] = Array.isArray(draft.modelFields)
+    ? (draft.modelFields as JsonRecord[]).map((f) => ({
+        key: String(f.key),
+        displayName: String(f.displayName),
+        type: f.type as OnboardingField["type"],
+        ...(f.options ? { options: f.options as OnboardingField["options"] } : {}),
+        ...(f.default !== undefined ? { default: String(f.default) } : {}),
+        evidence: f.evidence as OnboardingField["evidence"],
+      }))
+    : [];
+
+  const model = upsertModelCatalogModel({
+    modelKey,
+    vendorKey,
+    modelAlias: modelKey,
+    labelZh: modelDisplayName,
+    kind: billingKind,
+    enabled: true,
+    onboarding: {
+      addedVia: "agent",
+      trialId: String(outcome.trialId || ""),
+      docsUrl: String(outcome.docsUrl || ""),
+      addedAt: nowIso(),
+      fields: onboardingFields,
+    },
+  });
+
+  // 4. mapping(s): create stage always; query stage if draft has one
+  const mappingCreate = draft.mappingCreate as JsonRecord | undefined;
+  if (mappingCreate) {
+    upsertModelCatalogMapping({
+      vendorKey,
+      taskKind,
+      name: `${modelDisplayName} (create)`,
+      enabled: true,
+      requestMapping: mappingCreate,
+      responseMapping: mappingCreate.response_mapping || null,
+    });
+  }
+  const mappingQuery = draft.mappingQuery as JsonRecord | undefined;
+  if (mappingQuery) {
+    upsertModelCatalogMapping({
+      vendorKey,
+      taskKind,
+      name: `${modelDisplayName} (query)`,
+      enabled: true,
+      requestMapping: mappingQuery,
+      responseMapping: mappingQuery.response_mapping || null,
+    });
+  }
+
+  return model;
+}
+
 export function upsertModelCatalogModel(payload: unknown): Model {
   const state = readCatalog();
   const raw = payload as JsonRecord;
@@ -1129,6 +1243,7 @@ export function upsertModelCatalogModel(payload: unknown): Model {
     enabled: normalizeEnabled(raw.enabled, existing?.enabled ?? true),
     meta: raw.meta ?? existing?.meta,
     pricing: raw.pricing as Model["pricing"] || existing?.pricing,
+    onboarding: (raw.onboarding as Model["onboarding"]) ?? existing?.onboarding,
     createdAt: existing?.createdAt || t,
     updatedAt: t,
   };
