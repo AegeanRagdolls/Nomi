@@ -62,6 +62,20 @@ describe("docExtractors.extractCurlExamples", () => {
     expect(curls).toHaveLength(1);
     expect(curls[0].url).toBe("https://api.example.com/list");
   });
+
+  it("decodes hex numeric entities (&#x27;) so the URL isn't polluted", () => {
+    // Apidog renders curl quotes as &#x27; — if left undecoded the parsed URL
+    // swallows a trailing &#x27; and the live test call 404s on a bad path.
+    const html =
+      "<pre><code>curl --location &#x27;https://api.kie.ai/api/v1/jobs/createTask&#x27; \\\n" +
+      "--header &#x27;Content-Type: application/json&#x27; \\\n" +
+      "--data &#x27;{&#x22;prompt&#x22;: &#x22;hi&#x22;}&#x27;</code></pre>";
+    const curls = extractCurlExamples(html);
+    expect(curls).toHaveLength(1);
+    expect(curls[0].url).toBe("https://api.kie.ai/api/v1/jobs/createTask");
+    expect(curls[0].command).not.toContain("&#x");
+    expect(curls[0].body).toEqual({ prompt: "hi" });
+  });
 });
 
 describe("docExtractors.extractCodeBlocks", () => {

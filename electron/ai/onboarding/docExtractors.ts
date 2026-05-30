@@ -40,13 +40,32 @@ function stripHtmlTags(value: string): string {
 }
 
 function decodeEntities(value: string): string {
-  return value
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, " ");
+  return (
+    value
+      // Numeric entities FIRST (named pass must not re-mangle them). Apidog and
+      // many SPA renderers emit hex entities like &#x27; (apostrophe) and &#x22;
+      // (quote) inside curl examples — if these survive, the parsed request URL
+      // swallows the trailing `&#x27;` and the test call 404s on a bad path.
+      .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => safeFromCodePoint(parseInt(hex, 16)))
+      .replace(/&#(\d+);/g, (_, dec) => safeFromCodePoint(parseInt(dec, 10)))
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&apos;/g, "'")
+      .replace(/&nbsp;/g, " ")
+      // &amp; LAST so it can't double-decode an entity that was itself encoded.
+      .replace(/&amp;/g, "&")
+  );
+}
+
+function safeFromCodePoint(code: number): string {
+  if (!Number.isFinite(code) || code < 0 || code > 0x10ffff) return "";
+  try {
+    return String.fromCodePoint(code);
+  } catch {
+    return "";
+  }
 }
 
 /** Extract all <table> elements as structured rows. */

@@ -34,8 +34,16 @@ export type DocOperation = {
 type JsonObj = Record<string, unknown>;
 
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete"] as const;
-// Keys that are server-side wiring, not user-facing generation params.
-const WIRING_KEY = /^(model|api[-_]?key|apikey|token|secret|user_token|authorization)$/i;
+// Keys that are server-side wiring or request/response envelope — never a
+// user-facing generation param. Covers the common shapes across aggregators:
+//   - auth/model selection (handled by set_vendor_info, not a field)
+//   - async job envelope: callbacks + webhooks (kie callBackUrl, replicate webhook)
+//   - response/echo fields that leak into combined OpenAPI schemas
+//     (id/created_at/status/urls on replicate's createPrediction)
+// This list is intentionally limited to fields that are NEVER generation params
+// on ANY provider — we'd rather keep a borderline param than drop a real one.
+const WIRING_KEY =
+  /^(model|api[-_]?key|apikey|token|secret|user_token|authorization|stream|callback|callback[-_]?url|webhook|webhooks|webhook[-_]?events?[-_]?filter|id|status|error|logs|metrics|urls|created[-_]?at|updated[-_]?at|completed[-_]?at|started[-_]?at|deployment|version)$/i;
 
 function isObj(v: unknown): v is JsonObj {
   return !!v && typeof v === "object" && !Array.isArray(v);
@@ -426,7 +434,13 @@ export function extractDehydratedParameters(html: string): DocOperation[] {
     // CSS/nav/locale runs (false positives) are preceded by `},` or a string.
     // This is the discriminator that separates the 2 real params from ~80 noise
     // runs on the page.
-    if (!/\[\s*\d+(?:\s*,\s*\d+)*\s*\]\s*,?\s*$/.test(before)) continue;
+    const refArrayMatch = /\[\s*(\d+(?:\s*,\s*\d+)*)\s*\]\s*,?\s*$/.exec(before);
+    if (!refArrayMatch) continue;
+    // The ref array's length == the enum cardinality (one ref per value). Use it
+    // to cap the value run so adjacent metadata keys (e.g. Apidog's
+    // "x-apidog-enum") and the next param's tokens don't bleed in. Principled:
+    // the dereferenced-label array IS the enum, by construction.
+    const refCount = refArrayMatch[1].split(",").length;
     // nearest preceding bare identifier that is a known generation param
     const ids: string[] = [];
     BARE_ID.lastIndex = 0;
@@ -441,8 +455,13 @@ export function extractDehydratedParameters(html: string): DocOperation[] {
     }
     if (!name) continue;
 
-    // parse + dedupe the option values
-    const rawOpts = [...runStr.matchAll(/"([^"\n]{1,24})"/g)].map((x) => x[1]);
+    // parse + dedupe the option values, capped to the ref-array cardinality and
+    // with OpenAPI/Apidog extension keys (x-apidog-enum, x-enum-varnames, ...)
+    // filtered out as a guard.
+    const rawOpts = [...runStr.matchAll(/"([^"\n]{1,24})"/g)]
+      .map((x) => x[1])
+      .filter((v) => !/^x-[a-z][a-z-]*$/i.test(v))
+      .slice(0, refCount);
     const optValues: string[] = [];
     for (const v of rawOpts) if (!optValues.includes(v)) optValues.push(v);
     if (optValues.length < 2) continue;

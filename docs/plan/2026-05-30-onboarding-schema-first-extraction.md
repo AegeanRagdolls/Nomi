@@ -76,6 +76,27 @@ v1 上线后真机重跑 kie GPT Image-2,仍 `partial`、参数只有 `aspect_ra
 
 > Rule 1:digest 不是被并行保留,而是明确降级为兜底;结构化解析是新真理源,curl 仅管路径/鉴权。
 
+## 5c. 跨平台压测 + 通用化（同日，多文档实证）
+
+方法论:抽取层是确定性的,可不跑 LLM/key 直接对真实 HTML 跑全套抽取器,精确复现 agent 所见。拿 kie 视频文档(seedance/v1-pro/grok)+ 3 个**非 kie 中转站**(Replicate/fal.ai/piapi)压测,每个问题都收敛成**通用规则**(不做按平台 whack-a-mole)。
+
+| 平台 | 路径 | 发现 → 通用修复 |
+|---|---|---|
+| kie 视频(3 个) | 去水化 | 泛化良好(aspect_ratio/resolution/duration 跨模型都对) |
+| kie grok-t2v | 去水化 | `x-apidog-enum` 扩展键泄漏进选项 → **ref 数组长度 == 枚举基数**,选项串截断到 ref 数 + 过滤 `^x-` 扩展键 |
+| **所有 kie curl** | curl | URL 含未解码 `&#x27;` → **真机 404 尾随 `&` 的真正根因**;`decodeEntities` 只认 `&#39;` 十进制 → 补通用十六进制/十进制数字实体(`&#xHH;`/`&#NNN;` via `fromCodePoint`),`&amp;` 放最后避免二次解码 |
+| Replicate | OpenAPI ✓ | envelope/response 字段(`id/webhook/created_at/webhook_events_filter`)混进参数 → **扩 `WIRING_KEY` denylist**(callback/webhook/created_at/id/status/urls/version...),一处同时管 OpenAPI + 去水化两条路径;保守只删「在任何提供商都绝不是生成参数」的字段 |
+| fal.ai | 都没命中→digest | Next/RSC store,Apidog ref 签名不匹配 → 暂走 digest 兜底;深修=跟随链接抓 `openapi.json`(R2) |
+| piapi.ai | table+curl+去水化 | 有真 `<table>`,agent 走表格路径,基本 OK;curl 用 `x-api-key` 头(blueprint 路径已支持) |
+
+**本轮新增修复(均带测试):**
+- `extractDehydratedParameters`:选项截断到前置 ref 数组长度 + 过滤 `^x-[a-z-]+$` 扩展键。
+- `decodeEntities`:支持任意十六进制/十进制数字实体,`&amp;` 移到最后。
+- `WIRING_KEY`:扩为 envelope/wiring 全集。
+- 测试:+2(grok x-apidog-enum 截断、kie `&#x27;` curl 解码)。33 文件 / 294 测试全绿。
+
+> 方法论沉淀:抽取层确定性 → 可离线对任意真实文档回归,这是「持续优化但每次都通用泛化」的工程支点,不必每次都真机跑 agent。
+
 ## 6. 后续（不在本轮）
 
 - 把 spec-only 参数合并进请求 body 模板（`resolution` 选了能真正发出）。

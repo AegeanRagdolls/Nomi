@@ -167,6 +167,19 @@ describe("extractDehydratedParameters — structured Apidog-store recovery", () 
   it("returns [] when no generation-param enum runs are present", () => {
     expect(extractDehydratedParameters('<script>self.x=["a","b","c"]</script>')).toEqual([]);
   });
+
+  it("caps options to the ref-array length and drops leaked x-apidog-enum keys", () => {
+    // Real grok-imagine shape: ref array has 2 entries → 2 real values, but
+    // Apidog's "x-apidog-enum" extension key sits adjacent in the token run.
+    const html =
+      "<script>self.__d=[" +
+      '"resolution",{"_5":2016},"The resolution of the generated video.",' +
+      '[2053,2054],"480p","720p","x-apidog-enum",[2057,2059],{"_2058":2053}' +
+      "];</script>";
+    const ops = extractDehydratedParameters(html);
+    const res = ops[0].fields.find((f) => f.key === "resolution")!;
+    expect(res.options!.map((o) => o.value)).toEqual(["480p", "720p"]);
+  });
 });
 
 describe("extractEmbeddedParameterData — dehydrated SPA store digest", () => {
