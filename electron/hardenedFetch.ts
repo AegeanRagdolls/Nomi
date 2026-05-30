@@ -22,6 +22,14 @@ export type HardenedFetchOptions = {
   allowContentTypes?: readonly string[];
   /** 允许 redirect。默认 true。 */
   allowRedirect?: boolean;
+  /** HTTP method。默认 GET。 */
+  method?: string;
+  /** 请求头。Authorization / Content-Type 等。 */
+  headers?: Record<string, string>;
+  /** 请求体。string 直接发，object/array 自动 JSON.stringify。 */
+  body?: unknown;
+  /** 是否拒抛非 2xx —— 默认 true（保持旧行为）。设为 false 则返回任何 status 不抛错（让调用方读 body 自己判断）。 */
+  throwOnNon2xx?: boolean;
 };
 
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -125,11 +133,24 @@ export async function hardenedFetch(
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    const method = (options.method || "GET").toUpperCase();
+    const hasBody = method !== "GET" && method !== "HEAD" && options.body != null;
+    const requestHeaders = { ...(options.headers || {}) };
+    let bodyInit: string | undefined;
+    if (hasBody) {
+      bodyInit = typeof options.body === "string" ? options.body : JSON.stringify(options.body);
+      if (!Object.keys(requestHeaders).some((k) => k.toLowerCase() === "content-type")) {
+        requestHeaders["Content-Type"] = "application/json";
+      }
+    }
     const response = await fetch(url, {
+      method,
       signal: controller.signal,
       redirect: allowRedirect ? "follow" : "error",
+      headers: requestHeaders,
+      ...(bodyInit !== undefined ? { body: bodyInit } : {}),
     });
-    if (!response.ok) {
+    if (!response.ok && options.throwOnNon2xx !== false) {
       throw new Error(`Fetch failed: HTTP ${response.status}`);
     }
 

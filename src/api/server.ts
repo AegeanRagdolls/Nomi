@@ -109,14 +109,25 @@ export type ModelCatalogModelDto = {
   updatedAt: string
 }
 
+export type HttpOperationDto = {
+  method: string
+  path: string
+  headers?: Record<string, string>
+  query?: Record<string, unknown>
+  body?: unknown
+  response_mapping?: Record<string, unknown>
+  provider_meta_mapping?: Record<string, unknown>
+}
+
 export type ModelCatalogMappingDto = {
   id: string
   vendorKey: string
   taskKind: ProfileKind
   name: string
   enabled: boolean
-  requestMapping?: unknown
-  responseMapping?: unknown
+  create: HttpOperationDto
+  query?: HttpOperationDto
+  statusMapping?: Record<string, string[]>
   createdAt: string
   updatedAt: string
 }

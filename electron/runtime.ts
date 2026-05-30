@@ -111,14 +111,38 @@ type Model = {
   updatedAt: string;
 };
 
+/**
+ * A single HTTP call template: method + path (relative to vendor.baseUrl, or
+ * absolute), headers, query, body. String values may contain `{{...}}`
+ * placeholders resolved by `renderTemplateValue` against the request context.
+ * `response_mapping` / `provider_meta_mapping` describe how to read the
+ * upstream response (used by `buildProfileTaskResult`).
+ */
+type HttpOperation = {
+  method: string;
+  path: string;
+  headers?: Record<string, string>;
+  query?: Record<string, unknown>;
+  body?: unknown;
+  response_mapping?: Record<string, unknown>;
+  provider_meta_mapping?: Record<string, unknown>;
+};
+
+/**
+ * One (vendor, taskKind) → one mapping row. `create` is the synchronous POST
+ * (or whatever initiates the task). `query` is the poll for async APIs.
+ * Vendors that map their status strings to ours can use `statusMapping`
+ * (e.g. `{ succeeded: ["completed", "done"] }`).
+ */
 type Mapping = {
   id: string;
   vendorKey: string;
   taskKind: ProfileKind;
   name: string;
   enabled: boolean;
-  requestMapping?: unknown;
-  responseMapping?: unknown;
+  create: HttpOperation;
+  query?: HttpOperation;
+  statusMapping?: Record<string, string[]>;
   createdAt: string;
   updatedAt: string;
 };
@@ -134,9 +158,15 @@ type ApiKeyRecord = {
   updatedAt: string;
 };
 
-/** Catalog version. v2 added Model.onboarding + ApiKeyRecord.enc. */
-type CatalogVersion = 1 | 2;
-const CURRENT_CATALOG_VERSION: CatalogVersion = 2;
+/** Catalog version.
+ *  v2 added Model.onboarding + ApiKeyRecord.enc.
+ *  v3 collapsed Mapping.{requestMapping,responseMapping} (which used to wrap
+ *  things in a v2 envelope `{version, create:{default}, query:{default}}`) into
+ *  flat Mapping.{create,query} HttpOperation fields. Old rows are normalized
+ *  in `migrateCatalogForward`.
+ */
+type CatalogVersion = 1 | 2 | 3;
+const CURRENT_CATALOG_VERSION: CatalogVersion = 3;
 
 type CatalogState = {
   version: CatalogVersion;
@@ -829,6 +859,92 @@ function readCatalog(): CatalogState {
 }
 
 /**
+ * Convert one legacy mapping payload into a `{create, query}` pair, handling:
+ *  - bare op: `{method, path, headers, body}` → treat as create
+ *  - v2 envelope: `{version: "v2", create: {default: op}, query: {default: op}}`
+ *    → unwrap both stages
+ * Returns whatever is recognizable; the caller merges across rows.
+ */
+function extractLegacyStages(raw: unknown): { create?: HttpOperation; query?: HttpOperation; statusMapping?: Record<string, string[]> } {
+  if (!isJsonRecord(raw)) return {};
+  const out: { create?: HttpOperation; query?: HttpOperation; statusMapping?: Record<string, string[]> } = {};
+  const opFrom = (v: unknown): HttpOperation | undefined => {
+    if (!isJsonRecord(v)) return undefined;
+    const inner = isJsonRecord(v.default) ? v.default : v;
+    if (typeof inner.method === "string" && typeof inner.path === "string") return inner as unknown as HttpOperation;
+    return undefined;
+  };
+  // Bare op first — a legacy {method, path, headers, body, query} row has its
+  // own `query` field (HTTP query params), so envelope detection by the
+  // presence of `raw.query` is wrong. Only unwrap an envelope when the marker
+  // `version === "v2"` is present or `raw.create` is itself an op.
+  if (typeof raw.method === "string" && typeof raw.path === "string") {
+    out.create = raw as unknown as HttpOperation;
+  } else if (raw.version === "v2" || opFrom(raw.create) || opFrom(raw.query)) {
+    const c = opFrom(raw.create);
+    const q = opFrom(raw.query);
+    if (c) out.create = c;
+    if (q) out.query = q;
+    if (isJsonRecord(raw.status_mapping)) out.statusMapping = raw.status_mapping as Record<string, string[]>;
+  }
+  return out;
+}
+
+function normalizeLegacyMappings(rawMappings: unknown): Mapping[] {
+  const list = Array.isArray(rawMappings) ? rawMappings : [];
+  const grouped = new Map<string, Mapping>();
+  for (const item of list) {
+    if (!isJsonRecord(item)) continue;
+    const vendorKey = String(item.vendorKey || "").trim();
+    const taskKind = (item.taskKind as ProfileKind) || "chat";
+    if (!vendorKey) continue;
+    const key = `${vendorKey}|${taskKind}`;
+    const existing = grouped.get(key);
+    const name = String(item.name || "");
+    const isQueryRow = /\bquery\b/i.test(name);
+    const fromRequest = extractLegacyStages(item.requestMapping);
+    const fromResponse = extractLegacyStages(item.responseMapping);
+    // If the row's name says "query" but the legacy op landed in `create`,
+    // promote it to `query` — those old rows stored a single op regardless of stage.
+    const stages: { create?: HttpOperation; query?: HttpOperation; statusMapping?: Record<string, string[]> } = {};
+    for (const stage of [fromRequest, fromResponse]) {
+      if (stage.create && isQueryRow && !stage.query) {
+        stages.query = stages.query || stage.create;
+      } else {
+        if (stage.create) stages.create = stages.create || stage.create;
+        if (stage.query) stages.query = stages.query || stage.query;
+      }
+      if (stage.statusMapping) stages.statusMapping = { ...(stages.statusMapping || {}), ...stage.statusMapping };
+    }
+    const baseName = name.replace(/\s*\((create|query)\)\s*$/i, "").trim() || taskKind;
+    const id = String(item.id || "").trim() || `mapping-${crypto.randomUUID()}`;
+    const createdAt = String(item.createdAt || nowIso());
+    if (!existing) {
+      if (!stages.create && !stages.query) continue; // unsalvageable
+      grouped.set(key, {
+        id,
+        vendorKey,
+        taskKind,
+        name: baseName,
+        enabled: normalizeEnabled(item.enabled, true),
+        create: stages.create || (stages.query as HttpOperation), // create is required; fall back if only query was salvageable
+        ...(stages.query ? { query: stages.query } : {}),
+        ...(stages.statusMapping ? { statusMapping: stages.statusMapping } : {}),
+        createdAt,
+        updatedAt: nowIso(),
+      });
+    } else {
+      // Merge: keep first row's create, fill in query from any later row.
+      if (!existing.query && stages.query) existing.query = stages.query;
+      if (!existing.query && stages.create && isQueryRow) existing.query = stages.create;
+      if (stages.statusMapping) existing.statusMapping = { ...(existing.statusMapping || {}), ...stages.statusMapping };
+      existing.updatedAt = nowIso();
+    }
+  }
+  return Array.from(grouped.values());
+}
+
+/**
  * In-place forward migration. Unknown future versions fall back to defaults.
  * Always returns a state at CURRENT_CATALOG_VERSION.
  */
@@ -847,6 +963,14 @@ function migrateCatalogForward(state: CatalogState): CatalogState {
       apiKeysByVendor[k] = { ...rec, enc: rec.enc || "plain" };
     }
     s = { ...s, version: 2, apiKeysByVendor };
+    writeCatalog(s);
+  }
+
+  if (s.version === 2) {
+    // v2 → v3: collapse legacy {requestMapping,responseMapping} into flat
+    // {create,query}. Handles three legacy shapes — bare op, v2 envelope, and
+    // split create/query rows — and dedupes by (vendorKey, taskKind).
+    s = { ...s, version: 3, mappings: normalizeLegacyMappings(s.mappings) };
     writeCatalog(s);
   }
 
@@ -1157,27 +1281,17 @@ export function commitOnboardedModelToCatalog(payload: {
     },
   });
 
-  // 4. mapping(s): create stage always; query stage if draft has one
-  const mappingCreate = draft.mappingCreate as JsonRecord | undefined;
+  // 4. mapping: one row per (vendor, taskKind), carrying both stages.
+  const mappingCreate = draft.mappingCreate as HttpOperation | undefined;
+  const mappingQuery = draft.mappingQuery as HttpOperation | undefined;
   if (mappingCreate) {
     upsertModelCatalogMapping({
       vendorKey,
       taskKind,
-      name: `${modelDisplayName} (create)`,
+      name: modelDisplayName,
       enabled: true,
-      requestMapping: mappingCreate,
-      responseMapping: mappingCreate.response_mapping || null,
-    });
-  }
-  const mappingQuery = draft.mappingQuery as JsonRecord | undefined;
-  if (mappingQuery) {
-    upsertModelCatalogMapping({
-      vendorKey,
-      taskKind,
-      name: `${modelDisplayName} (query)`,
-      enabled: true,
-      requestMapping: mappingQuery,
-      responseMapping: mappingQuery.response_mapping || null,
+      create: mappingCreate,
+      ...(mappingQuery ? { query: mappingQuery } : {}),
     });
   }
 
@@ -1219,20 +1333,35 @@ export function deleteModelCatalogModel(vendorKey: string, modelKey: string): vo
 export function upsertModelCatalogMapping(payload: unknown): Mapping {
   const state = readCatalog();
   const raw = payload as JsonRecord;
-  const id = String(raw.id || "").trim() || `mapping-${crypto.randomUUID()}`;
-  const existing = state.mappings.find((mapping) => mapping.id === id);
-  const t = nowIso();
-  const vendorKey = String(raw.vendorKey || existing?.vendorKey || "").trim();
-  const taskKind = (raw.taskKind as ProfileKind) || existing?.taskKind || "chat";
+  const vendorKey = String(raw.vendorKey || "").trim();
+  const taskKind = (raw.taskKind as ProfileKind) || "chat";
   if (!vendorKey) throw new Error("vendorKey is required");
+  // One mapping per (vendor, taskKind). If id is supplied and matches, update
+  // that row; otherwise locate by (vendor, taskKind) so callers can upsert
+  // without tracking ids.
+  const existing = state.mappings.find((m) =>
+    raw.id ? m.id === raw.id : m.vendorKey === vendorKey && m.taskKind === taskKind,
+  );
+  const id = String(raw.id || existing?.id || `mapping-${crypto.randomUUID()}`);
+  const t = nowIso();
+  // Accept new shape (create/query) directly, or legacy {requestMapping,...}
+  // (e.g. via the unchanged import path) and normalize on the way in.
+  const legacy = extractLegacyStages(raw.requestMapping ?? raw.requestProfile);
+  const legacyResp = extractLegacyStages(raw.responseMapping);
+  const create = (raw.create as HttpOperation | undefined) || legacy.create || legacyResp.create || existing?.create;
+  const query = (raw.query as HttpOperation | undefined) || legacy.query || legacyResp.query || existing?.query;
+  if (!create) throw new Error("create operation is required (method + path)");
   const mapping: Mapping = {
     id,
     vendorKey,
     taskKind,
     name: String(raw.name || existing?.name || taskKind).trim(),
     enabled: normalizeEnabled(raw.enabled, existing?.enabled ?? true),
-    requestMapping: raw.requestMapping ?? raw.requestProfile ?? existing?.requestMapping,
-    responseMapping: raw.responseMapping ?? raw.requestProfile ?? existing?.responseMapping,
+    create,
+    ...(query ? { query } : {}),
+    ...(raw.statusMapping || legacy.statusMapping || existing?.statusMapping
+      ? { statusMapping: (raw.statusMapping as Record<string, string[]>) || legacy.statusMapping || existing?.statusMapping }
+      : {}),
     createdAt: existing?.createdAt || t,
     updatedAt: t,
   };
@@ -1334,21 +1463,8 @@ export async function testModelCatalogMapping(id: string, payload: unknown): Pro
       request: null,
     };
   }
-  const profile = requestProfileFromMapping(mapping);
-  if (!profile) {
-    return {
-      mappingId: id,
-      vendorKey: mapping.vendorKey,
-      taskKind: mapping.taskKind,
-      stage: raw?.stage || "create",
-      executed: false,
-      ok: false,
-      diagnostics: ["Only requestProfile.version=v2 can be tested in the desktop runtime."],
-      request: null,
-    };
-  }
   const stage = raw?.stage === "result" || raw?.stage === "query" ? "query" : "create";
-  const operation = profileOperation(profile, stage);
+  const operation: HttpOperation | undefined = stage === "create" ? mapping.create : mapping.query;
   if (!operation) {
     return {
       mappingId: id,
@@ -1357,7 +1473,7 @@ export async function testModelCatalogMapping(id: string, payload: unknown): Pro
       stage,
       executed: false,
       ok: false,
-      diagnostics: [`No ${stage}.default operation in requestProfile.`],
+      diagnostics: [`Mapping has no ${stage} stage.`],
       request: null,
     };
   }
@@ -1381,7 +1497,7 @@ export async function testModelCatalogMapping(id: string, payload: unknown): Pro
   if (typeof upstreamResponse !== "undefined") {
     const normalized = await buildProfileTaskResult({
       response: upstreamResponse,
-      profile,
+      mapping,
       operation,
       request,
       taskIdFallback: firstString(raw?.taskId, `test-${Date.now()}`),
@@ -1407,14 +1523,14 @@ export async function testModelCatalogMapping(id: string, payload: unknown): Pro
       stage,
       executed: false,
       ok: true,
-      diagnostics: ["Rendered local desktop requestProfile without sending a request."],
+      diagnostics: ["Rendered local desktop mapping without sending a request."],
       request: preview,
     };
   }
   const executed = await executeProfileOperation({ vendor, model, apiKey, request, operation, providerMeta });
   const normalized = await buildProfileTaskResult({
     response: executed.response,
-    profile,
+    mapping,
     operation,
     request,
     taskIdFallback: firstString(raw?.taskId, `test-${Date.now()}`),
@@ -1427,7 +1543,7 @@ export async function testModelCatalogMapping(id: string, payload: unknown): Pro
     stage,
     executed: true,
     ok: normalized.result.status !== "failed",
-    diagnostics: ["Executed requestProfile through the desktop runtime."],
+    diagnostics: ["Executed mapping through the desktop runtime."],
     request: executed.request,
     response: normalized.result,
   };
@@ -1788,21 +1904,6 @@ function findTaskMapping(vendorKey: string, taskKind: ProfileKind): Mapping | nu
   return state.mappings.find((mapping) => mapping.enabled && mapping.vendorKey === vendorKey && mapping.taskKind === taskKind) || null;
 }
 
-function requestProfileFromMapping(mapping: Mapping | null | undefined): JsonRecord | null {
-  if (!mapping) return null;
-  for (const candidate of [mapping.requestMapping, mapping.responseMapping]) {
-    if (isJsonRecord(candidate) && candidate.version === "v2" && candidate.enabled !== false) return candidate;
-  }
-  return null;
-}
-
-function profileOperation(profile: JsonRecord, stage: "create" | "query"): JsonRecord | null {
-  const group = profile[stage];
-  if (!isJsonRecord(group)) return null;
-  const operation = isJsonRecord(group.default) ? group.default : group;
-  return isJsonRecord(operation) ? operation : null;
-}
-
 function firstReferenceImage(request: TaskRequest): string {
   const extras = request.extras || {};
   const referenceImages = Array.isArray(extras.referenceImages) ? extras.referenceImages : [];
@@ -1959,7 +2060,7 @@ function buildProfileHttpRequest(input: {
   model: Model;
   apiKey: string;
   request: TaskRequest;
-  operation: JsonRecord;
+  operation: HttpOperation;
   providerMeta?: JsonRecord;
 }): { method: string; url: string; headers: Record<string, string>; query: Record<string, unknown>; body: unknown; preview: unknown } {
   const context = templateContext(input.request, input.model, input.apiKey, input.providerMeta || {});
@@ -1997,7 +2098,7 @@ async function executeProfileOperation(input: {
   model: Model;
   apiKey: string;
   request: TaskRequest;
-  operation: JsonRecord;
+  operation: HttpOperation;
   providerMeta?: JsonRecord;
 }): Promise<{ response: unknown; request: unknown }> {
   const built = buildProfileHttpRequest(input);
@@ -2008,6 +2109,19 @@ async function executeProfileOperation(input: {
   };
 }
 
+/**
+ * If `value` is a string that looks like serialized JSON ({...} or [...]),
+ * parse it. Some providers (kie.ai) return nested results as JSON strings
+ * (e.g. `data.resultJson = "{\"resultUrls\":[...]}"`) and the mapping path
+ * `data.resultJson.resultUrls.0` only works if we transparently parse.
+ */
+function maybeParseJsonString(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!(trimmed.startsWith("{") || trimmed.startsWith("["))) return value;
+  try { return JSON.parse(trimmed); } catch { return value; }
+}
+
 function pathValues(input: unknown, expression: string): unknown[] {
   const parts = expression.split(".").map((part) => part.trim()).filter(Boolean);
   let current: unknown[] = [input];
@@ -2015,7 +2129,8 @@ function pathValues(input: unknown, expression: string): unknown[] {
     const wildcard = part.endsWith("[*]");
     const key = wildcard ? part.slice(0, -3) : part;
     const next: unknown[] = [];
-    for (const item of current) {
+    for (const rawItem of current) {
+      const item = maybeParseJsonString(rawItem);
       let value: unknown;
       if (/^\d+$/.test(key) && Array.isArray(item)) {
         value = item[Number(key)];
@@ -2025,7 +2140,8 @@ function pathValues(input: unknown, expression: string): unknown[] {
         value = item;
       }
       if (wildcard) {
-        if (Array.isArray(value)) next.push(...value);
+        const parsed = maybeParseJsonString(value);
+        if (Array.isArray(parsed)) next.push(...parsed);
       } else if (typeof value !== "undefined") {
         next.push(value);
       }
@@ -2068,7 +2184,7 @@ function collectAssetUrls(value: unknown): string[] {
   return [];
 }
 
-function taskStatusFromResponse(response: unknown, responseMapping: JsonRecord | null, profile: JsonRecord, assetUrls: string[]): TaskResult["status"] {
+function taskStatusFromResponse(response: unknown, responseMapping: JsonRecord | null, statusMapping: Record<string, string[]> | undefined, assetUrls: string[]): TaskResult["status"] {
   const mappedStatus = firstMappedString(response, responseMapping, "status");
   const fallbackStatus = firstString(
     mappedStatus,
@@ -2076,9 +2192,9 @@ function taskStatusFromResponse(response: unknown, responseMapping: JsonRecord |
     isJsonRecord(response) ? readNestedRecord(response, ["data", "status"]) : "",
     isJsonRecord(response) ? readNestedRecord(response, ["choices", "0", "finish_reason"]) : "",
   ).toLowerCase();
-  const statusMapping = isJsonRecord(profile.status_mapping) ? profile.status_mapping : {};
+  const sm = statusMapping || {};
   for (const status of ["queued", "running", "succeeded", "failed"] as const) {
-    const values = Array.isArray(statusMapping[status]) ? statusMapping[status] as unknown[] : [];
+    const values = Array.isArray(sm[status]) ? sm[status] : [];
     if (values.map((item) => String(item).toLowerCase()).includes(fallbackStatus)) return status;
   }
   if (["queued", "pending"].includes(fallbackStatus)) return "queued";
@@ -2108,8 +2224,8 @@ function providerMetaFromResponse(response: unknown, mapping: JsonRecord | null)
 
 async function buildProfileTaskResult(input: {
   response: unknown;
-  profile: JsonRecord;
-  operation: JsonRecord;
+  mapping: Mapping;
+  operation: HttpOperation;
   request: TaskRequest;
   taskIdFallback: string;
   wantedKind: BillingModelKind;
@@ -2135,7 +2251,7 @@ async function buildProfileTaskResult(input: {
     ...mappedAssetValues.flatMap(collectAssetUrls),
     ...collectAssetUrls(extractAssetUrl(input.response)),
   ]));
-  const status = taskStatusFromResponse(input.response, responseMapping, input.profile, assetUrls);
+  const status = taskStatusFromResponse(input.response, responseMapping, input.mapping.statusMapping, assetUrls);
   const type: "image" | "video" = input.wantedKind === "video" ? "video" : "image";
   const assets = input.projectId
     ? await Promise.all(assetUrls.map((url) => localizeTaskAsset(input.projectId || "", url, type, input.nodeId)))
@@ -2165,15 +2281,13 @@ export async function runTask(payload: unknown): Promise<TaskResult> {
   const nodeId = trim(request.extras?.nodeId);
   const taskId = `task-${crypto.randomUUID()}`;
   const mapping = findTaskMapping(vendorKey, kind);
-  const profile = requestProfileFromMapping(mapping);
-  const createOperation = profile ? profileOperation(profile, "create") : null;
 
-  if (profile && createOperation) {
-    const executed = await executeProfileOperation({ vendor, model, apiKey, request, operation: createOperation });
+  if (mapping) {
+    const executed = await executeProfileOperation({ vendor, model, apiKey, request, operation: mapping.create });
     const normalized = await buildProfileTaskResult({
       response: executed.response,
-      profile,
-      operation: createOperation,
+      mapping,
+      operation: mapping.create,
       request,
       taskIdFallback: taskId,
       wantedKind,
@@ -2287,9 +2401,8 @@ export async function fetchTaskResult(payload: unknown): Promise<{ vendor: strin
       },
     };
   }
-  const profile = requestProfileFromMapping(cached.mapping);
-  const queryOperation = profile ? profileOperation(profile, "query") : null;
-  if (profile && queryOperation && cached.model && cached.apiKey) {
+  const queryOperation = cached.mapping?.query;
+  if (cached.mapping && queryOperation && cached.model && cached.apiKey) {
     const { vendor, model, apiKey } = findExecutableModel(
       cached.vendor,
       cached.model.modelKey,
@@ -2309,7 +2422,7 @@ export async function fetchTaskResult(payload: unknown): Promise<{ vendor: strin
     });
     const normalized = await buildProfileTaskResult({
       response: executed.response,
-      profile,
+      mapping: cached.mapping,
       operation: queryOperation,
       request: cached.request,
       taskIdFallback: taskId,

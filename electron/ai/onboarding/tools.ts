@@ -15,7 +15,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { hardenedFetch, hardenedFetchText } from "../../hardenedFetch";
-import { draftStore } from "./draft";
+import { draftStore, looksAsyncResponse } from "./draft";
 import { extractTables, extractCurlExamples, extractCodeBlocks, htmlToMarkdown } from "./docExtractors";
 import { parseCurlBlueprint } from "./curlBlueprint";
 import type {
@@ -338,13 +338,47 @@ export function buildOnboardingTools(hooks: ToolHooks) {
         if (!draft.vendorBaseUrl) return err("vendor baseUrl not set");
         if (!draft.vendorAuth) return err("vendor auth not set");
 
-        // Render template variables
+        // Render template variables. For query stage, auto-derive providerMeta.task_id
+        // from the last successful create attempt — the agent shouldn't have to copy
+        // task ids by hand (and providing it via `params` is fragile because the
+        // mapping body template usually expects `{{providerMeta.task_id}}`).
         const userApiKey = hooks.resolveUserApiKey();
+        const providerMeta: Record<string, string> = {};
+        if (stage === "query") {
+          const lastCreate = [...draft.testAttempts].reverse().find((t) => t.stage === "create" && t.ok);
+          const createPaths = draft.mappingCreate?.response_mapping || {};
+          const taskIdPath = (createPaths as Record<string, string>).task_id;
+          const seedFromBody = (body: unknown): string => {
+            if (!body || typeof body !== "object") return "";
+            const obj = body as Record<string, unknown>;
+            const followPath = (p: string): unknown => p.split(".").reduce<unknown>((acc, k) => (acc && typeof acc === "object" ? (acc as Record<string, unknown>)[k] : undefined), obj);
+            if (taskIdPath) {
+              const v = followPath(taskIdPath);
+              if (typeof v === "string" || typeof v === "number") return String(v);
+            }
+            // Fallback: common shapes.
+            for (const path of ["data.taskId", "data.task_id", "data.id", "taskId", "task_id", "id", "data.jobId", "jobId"]) {
+              const v = followPath(path);
+              if (typeof v === "string" || typeof v === "number") return String(v);
+            }
+            return "";
+          };
+          const seeded = lastCreate ? seedFromBody(lastCreate.response.body) : "";
+          if (seeded) {
+            providerMeta.task_id = seeded;
+            providerMeta.query_id = seeded;
+          }
+          // Explicit override via params still wins.
+          if (params && typeof (params as Record<string, unknown>).taskId === "string") {
+            providerMeta.task_id = (params as Record<string, string>).taskId;
+            providerMeta.query_id = (params as Record<string, string>).taskId;
+          }
+        }
         const context = {
           request: { prompt, params: { ...(params || {}) } },
           model: { modelKey: draft.modelKey, model_key: draft.modelKey },
           user_api_key: userApiKey,
-          providerMeta: {},
+          providerMeta,
         };
         const renderedUrl = (() => {
           if (/^https?:\/\//i.test(op.path)) return renderTemplate(op.path, context);
@@ -388,15 +422,36 @@ export function buildOnboardingTools(hooks: ToolHooks) {
         let diagnostics: string[] = [];
         let okFlag = false;
         try {
-          const result = await hardenedFetch(renderedUrl, {
+          // Render query params (op.query) into the URL.
+          let finalUrl = renderedUrl;
+          if (op.query && Object.keys(op.query).length > 0) {
+            const u = new URL(renderedUrl);
+            for (const [k, v] of Object.entries(op.query)) {
+              const rendered = renderTemplate(String(v), context);
+              if (rendered !== "") u.searchParams.set(k, rendered);
+            }
+            finalUrl = u.toString();
+          }
+          const result = await hardenedFetch(finalUrl, {
             timeoutMs: 60_000,
             maxBytes: 10 * 1024 * 1024,
+            method: op.method,
+            headers,
+            body: renderedBody,
+            throwOnNon2xx: false,
           });
           status = result.status;
           try { respBody = JSON.parse(result.bytes.toString("utf8")); } catch { respBody = result.bytes.toString("utf8"); }
-          okFlag = result.status >= 200 && result.status < 300;
+          // Real success = HTTP 2xx AND (no logical-error envelope inside body).
+          // Many Chinese / Java providers (kie.ai, et al.) wrap real errors as
+          // `{ code: 4xx/5xx, msg: "...", data: null }` while returning HTTP 200.
+          const logicalErrorCode = looksLikeLogicalError(respBody);
+          okFlag = result.status >= 200 && result.status < 300 && logicalErrorCode == null;
+          if (logicalErrorCode != null) {
+            // Surface the logical code so buildDiagnostics can hint properly.
+            status = logicalErrorCode;
+          }
         } catch (e) {
-          // hardenedFetch throws on non-2xx  -  try to extract status if present
           const msg = e instanceof Error ? e.message : String(e);
           const statusMatch = msg.match(/HTTP\s+(\d+)/i);
           status = statusMatch ? Number(statusMatch[1]) : 0;
@@ -415,11 +470,17 @@ export function buildOnboardingTools(hooks: ToolHooks) {
           diagnostics,
         });
 
+        // For create-stage successes, flag whether the response looks like an
+        // async-job ack — agent uses this to decide whether step 5b is required.
+        const looksAsync = okFlag && stage === "create" ? looksAsyncResponse(respBody) : false;
         const result = ok({
           ok: okFlag,
           status,
           body: respBody,
-          diagnostics,
+          diagnostics: looksAsync
+            ? [...diagnostics, "ASYNC API DETECTED: response has a task-id without an asset URL. You MUST define mapping.query + run execute_test_curl({stage:'query'}) before commit_model."]
+            : diagnostics,
+          looks_async: looksAsync,
         });
         hooks.onToolCall?.({ tool: "execute_test_curl", args: { stage, prompt }, result });
         return result;
@@ -432,7 +493,8 @@ export function buildOnboardingTools(hooks: ToolHooks) {
     commit_model: tool({
       description:
         "Promote the current draft into a real catalog entry. " +
-        "Requires: vendor + model + mapping.create + at least one successful execute_test_curl. " +
+        "Requires: vendor + model + mapping.create + a successful execute_test_curl({stage:'create'}). " +
+        "If the create response looked async (taskId without an asset URL), ALSO requires mapping.query + a successful execute_test_curl({stage:'query'}). " +
         "If the checks fail, returns the list of issues  -  fix and call again.",
       parameters: z.object({
         confirm: z.literal(true),
@@ -531,6 +593,22 @@ function redactBody(body: unknown): unknown {
     }
   }
   return out;
+}
+
+/**
+ * Many providers (kie.ai, etc.) return HTTP 200 with a logical-error envelope
+ * `{ code: 404, msg: "...", data: null }`. Detect that so we don't claim
+ * success when the real call failed.
+ *
+ * Returns the logical error code if detected, else null.
+ */
+function looksLikeLogicalError(body: unknown): number | null {
+  if (!body || typeof body !== "object") return null;
+  const obj = body as Record<string, unknown>;
+  const code = obj.code;
+  if (typeof code === "number" && code >= 400 && code < 600) return code;
+  if (typeof code === "string" && /^\d{3}$/.test(code) && Number(code) >= 400) return Number(code);
+  return null;
 }
 
 function buildDiagnostics(status: number, body: unknown): string[] {

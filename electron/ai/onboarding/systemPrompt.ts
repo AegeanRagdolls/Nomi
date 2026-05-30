@@ -64,19 +64,30 @@ c. For each entry in \`blueprint.suggested_fields\`, attach evidence by quoting 
 
 The evidence for each field can be the curl line that contains it, or the parameter table row. Pick whichever is in front of you.
 
-## Step 5 — Test
+## Step 5 — Test create
 Call \`execute_test_curl({ stage: "create", prompt: "A simple short test prompt" })\`. Read the diagnostics.
 
-- If \`ok: true\` → proceed to step 6.
+- If \`ok: true\` → INSPECT the response body. If it contains a \`taskId\` / \`task_id\` / \`jobId\` / \`id\` but NO \`image_url\` / \`video_url\` / \`url\` / \`resultUrls\` field, this is an **async API** — go to step 5b. Otherwise (sync API returning the asset directly) → skip to step 6.
 - If 422 / 400 with a "missing field" message → add the field and retry.
 - If 422 / 400 with "field not allowed" → remove the field and retry.
-- If 404 → re-check the path in the blueprint vs the docs.
+- If 404 → re-check the path in the blueprint vs the docs (often missing a \`/api/v1\` prefix).
 - If 401 → the API key in the wizard is wrong; report and stop.
 
 You have at most 2 retries on test failures.
 
+## Step 5b — Async only: wire up the query stage (REQUIRED for async APIs)
+Async APIs that return a task id are **broken** in the catalog without a query stage. \`commit_model\` will reject the draft if you skip this.
+
+1. Go back to the docs (or \`fetch_raw_docs.curl_examples\`) and find the SECOND curl — the polling / "recordInfo" / "queryTask" / "getResult" call.
+2. \`extract_curl_blueprint({ curl: "<the polling curl>" })\` → blueprint for the query stage.
+3. \`set_mapping_request({ stage: "query", method: ..., path: ..., headers: ..., query: ..., body: ... })\` — use \`{{providerMeta.task_id}}\` where the curl had a literal taskId placeholder.
+4. \`set_mapping_response({ stage: "query", fieldPaths: { task_id: "<dot path to task id in response>", status: "<dot path to status string>", image_url or video_url or audio_url: "<dot path to the asset URL>", error_message: "<dot path to error msg>" } })\`. The asset path can traverse JSON-string fields (e.g. \`data.resultJson.resultUrls.0\` works even if \`resultJson\` is a JSON-encoded string — the runtime parses it).
+5. \`execute_test_curl({ stage: "query", prompt: "...", params: { taskId: "<id from step 5 response>" } })\`. **Must return ok: true.** If state is still "running" / "generating", that's fine — what matters is the call succeeds and the response shape matches your mapping. Pick an existing succeeded taskId if you can.
+
+Only after step 5b succeeds do you go to step 6.
+
 ## Step 6 — Commit
-\`commit_model({ confirm: true })\`. Done.
+\`commit_model({ confirm: true })\`. The committer re-checks async detection: if step 5 returned a task-id-shaped response and you didn't complete step 5b, commit will fail with a clear message.
 
 # Hard rules
 
@@ -86,24 +97,38 @@ You have at most 2 retries on test failures.
 - **Test before commit.** \`commit_model\` rejects without a successful \`execute_test_curl\`.
 - **{{user_api_key}}** is the placeholder for the user's real key — never echo or log the real key.
 
-# Async APIs (create + query)
+# Async API detection cheat-sheet
 
-If the docs show TWO curls — one to submit and one to poll for results — handle the second after step 6's first success:
-- After commit, optionally call \`extract_curl_blueprint\` again with the query curl, then \`set_mapping_request({ stage: "query", ... })\`.
-- This is OPTIONAL. Synchronous APIs (single curl returning result) skip this entirely.
+A response is **async** if it looks like ANY of these:
+- \`{ "code": 200, "data": { "taskId": "..." } }\`  ← kie.ai shape
+- \`{ "task_id": "..." }\` or \`{ "jobId": "..." }\` or \`{ "id": "..." }\` (top-level)
+- \`{ "status": "queued" / "pending" / "in_progress", "id": "..." }\`
+
+A response is **sync** if it includes the asset directly:
+- \`{ "data": [{ "url": "https://..." }] }\`  ← OpenAI images shape
+- \`{ "image_url": "..." }\` or \`{ "video_url": "..." }\` or \`{ "b64_json": "..." }\`
+
+If async → step 5b is mandatory. If sync → skip 5b.
 
 # Step budget
 
-Total target: ≤ 7 tool calls.
+Sync API target: ≤ 7 tool calls.
 - 1× fetch_raw_docs
 - 1× extract_curl_blueprint
 - 1× set_vendor_info
-- 1× set_mapping_request
+- 1× set_mapping_request (create)
 - 1× set_fields
-- 1× execute_test_curl
+- 1× execute_test_curl (create)
 - 1× commit_model
 
-If you find yourself at step 6+ tool calls without having run \`execute_test_curl\`, you are off track — stop fetching and stop adding fields, run the test.
+Async API target: ≤ 11 tool calls (extras for step 5b).
+- ...all of the above, plus:
+- 1× extract_curl_blueprint (query)
+- 1× set_mapping_request (query)
+- 1× set_mapping_response (query)
+- 1× execute_test_curl (query)
+
+If you find yourself at step 6+ tool calls without having run \`execute_test_curl\` for create, you are off track — stop fetching and stop adding fields, run the test.
 
 Begin.`;
 }

@@ -11,6 +11,34 @@
  */
 import type { OnboardingDraft, ModelKind, FieldDefinition, RequestProfileOperation } from "./types";
 
+/**
+ * Heuristic: does this response look like an async-job submission acknowledgement
+ * (returns a task/job id without any asset url)? If yes, the API requires
+ * polling — the draft needs a query stage before commit.
+ *
+ * Walks the response 2 levels deep looking for either a task-id-shaped key
+ * (taskId, task_id, jobId, job_id, id) or an asset-url-shaped key
+ * (image_url, video_url, audio_url, url, asset_url, resultUrls, results).
+ * If we see the former without the latter, it's async.
+ */
+export function looksAsyncResponse(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  const taskIdKeys = /^(task[_]?id|job[_]?id|id|recordId)$/i;
+  const assetKeys = /^(image_url|video_url|audio_url|asset_url|url|result_?urls?|results|assets|images|videos|output|data_url|b64_json)$/i;
+  let hasTaskId = false;
+  let hasAsset = false;
+  const walk = (node: unknown, depth: number): void => {
+    if (depth < 0 || !node || typeof node !== "object") return;
+    for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+      if (taskIdKeys.test(key) && (typeof value === "string" || typeof value === "number")) hasTaskId = true;
+      if (assetKeys.test(key) && value != null) hasAsset = true;
+      if (typeof value === "object") walk(value, depth - 1);
+    }
+  };
+  walk(body, 3);
+  return hasTaskId && !hasAsset;
+}
+
 export class DraftStore {
   private drafts = new Map<string, OnboardingDraft>();
 
@@ -74,6 +102,12 @@ export class DraftStore {
   /**
    * Check if draft is "complete enough to commit" — all required pieces present.
    * Returns null if OK, or a list of missing items.
+   *
+   * Async-API enforcement: if the most recent create test returned a payload
+   * that looks like a task-id without an asset URL (kie.ai style — every
+   * createTask endpoint behaves this way), commit is blocked until a query
+   * stage is defined AND a query test has succeeded. Without this, the model
+   * lands in the catalog "passing tests" but never actually returns an image.
    */
   validateForCommit(sessionId: string): string[] | null {
     const draft = this.get(sessionId);
@@ -84,12 +118,22 @@ export class DraftStore {
     if (!draft.modelKey) missing.push("model.key");
     if (draft.modelFields.length === 0) missing.push("model.fields (empty)");
     if (!draft.mappingCreate) missing.push("mapping.create");
-    // Async (video) usually needs query stage too — but not required for sync image models
-    if (draft.targetKind === "video" && !draft.mappingQuery) missing.push("mapping.query (recommended for async video)");
 
-    const lastTest = draft.testAttempts[draft.testAttempts.length - 1];
-    if (!lastTest) missing.push("no test attempts (must execute_test_curl at least once)");
-    else if (!lastTest.ok) missing.push(`last test failed: ${lastTest.diagnostics.join("; ")}`);
+    const createTest = [...draft.testAttempts].reverse().find((t) => t.stage === "create");
+    const queryTest = [...draft.testAttempts].reverse().find((t) => t.stage === "query");
+    if (!createTest) missing.push("no create test attempts (must execute_test_curl at least once)");
+    else if (!createTest.ok) missing.push(`last create test failed: ${createTest.diagnostics.join("; ")}`);
+
+    if (createTest?.ok && looksAsyncResponse(createTest.response?.body)) {
+      if (!draft.mappingQuery) {
+        missing.push("mapping.query (create returned a task id with no asset URL — this is an async API; define a query stage)");
+      }
+      if (!queryTest) {
+        missing.push("no query test attempts (async API requires execute_test_curl({stage:'query'}) to prove polling works)");
+      } else if (!queryTest.ok) {
+        missing.push(`last query test failed: ${queryTest.diagnostics.join("; ")}`);
+      }
+    }
 
     return missing.length > 0 ? missing : null;
   }
