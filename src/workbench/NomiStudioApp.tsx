@@ -22,7 +22,7 @@ import { toast } from '../ui/toast'
 import { setDesktopActiveProjectId } from '../desktop/activeProject'
 import { getDesktopBridge } from '../desktop/bridge'
 import { buildStudioUrl } from '../utils/appRoutes'
-import { openWorkspaceFromLibrary } from './library/openWorkspaceFlow'
+import { openWorkspaceFromLibrary, openWorkspaceProjectFromPicker } from './library/openWorkspaceFlow'
 
 type AppView = 'library' | 'studio'
 
@@ -135,8 +135,24 @@ export default function NomiStudioApp(): JSX.Element {
    * canvas-assistant listener might not be attached yet.
    */
   const tryExample = React.useCallback(async (example: TryNowExample) => {
-    const project = createLocalProject(example.projectName)
-    const hydrated = await hydrateProject(project.id)
+    const desktop = getDesktopBridge()
+    let projectId: string | null = null
+    if (desktop?.workspace) {
+      projectId = await openWorkspaceProjectFromPicker({
+        bridge: desktop,
+        name: example.projectName,
+        confirmInitialize: async (rootPath) => window.confirm(
+          `将此文件夹初始化为 Nomi 示例项目？\n\n${rootPath}\n\nNomi 会创建 .nomi/，并把生成的图片、视频保存到 assets/ 和 exports/。`,
+        ),
+        showMessage: (message, tone) => toast(message, tone || 'error'),
+      })
+      if (!projectId) return
+      refreshProjects()
+    } else {
+      const project = createLocalProject(example.projectName)
+      projectId = project.id
+    }
+    const hydrated = await hydrateProject(projectId)
     if (!hydrated) return
     const doc = buildStoryDocument(example.story, example.projectName)
     const store = useWorkbenchStore.getState()
@@ -147,7 +163,7 @@ export default function NomiStudioApp(): JSX.Element {
     window.setTimeout(() => {
       requestStoryboardPlanning({ storyText: example.story, source: `library-try-now:${example.id}` })
     }, 200)
-  }, [hydrateProject])
+  }, [hydrateProject, refreshProjects])
 
   const deleteProject = React.useCallback((project: LocalProjectSummary) => {
     const confirmed = window.confirm(`确定删除「${project.name}」吗？项目文件夹和本地资源会一起删除。`)

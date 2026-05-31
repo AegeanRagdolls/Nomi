@@ -148,4 +148,14 @@ describe("runtime workspace project APIs", () => {
     expect(listProjects()).toEqual([]);
     expect(readProject("delete-legacy-id")).toBeNull();
   });
+
+  it("does not create new desktop projects directly under the default projects root without a rootPath", () => {
+    expect(() => createProject({ name: "No Folder", payload: {} })).toThrow(/rootPath/);
+    expect(fs.existsSync(path.join(mockedDocumentsRoot, "Nomi Projects"))).toBe(false);
+  });
+
+  it("does not create new fixed-root projects when saving an unknown project id", () => {
+    expect(() => saveProject("missing-id", { name: "Missing", payload: {} })).toThrow(/workspace project/i);
+    expect(listProjects()).toEqual([]);
+  });
 });

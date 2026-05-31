@@ -569,13 +569,7 @@ export function createProject(input: unknown): ProjectRecord {
     return createWorkspaceProject({ rootPath, record: input }, getWorkspaceRepositoryDeps());
   }
 
-  const root = getProjectsRoot();
-  ensureDir(root);
-  const record = normalizeProjectRecord(input);
-  const projectDir = uniqueDir(root, record.name);
-  ensureProjectFolders(projectDir);
-  writeJson(path.join(projectDir, PROJECT_FILE), record);
-  return record;
+  throw new Error("rootPath is required to create a desktop workspace project");
 }
 
 export function readProject(projectId: string): ProjectRecord | null {
@@ -594,8 +588,9 @@ export function saveProject(projectId: string, input: unknown): ProjectRecord {
     return saveWorkspaceProject(id, input, getWorkspaceRepositoryDeps());
   }
 
+  const projectDir = legacyProjectDirById(id);
+  if (!projectDir) throw new Error("Cannot save unknown workspace project");
   const record = normalizeProjectRecord({ ...(input as JsonRecord), id });
-  const projectDir = legacyProjectDirById(id) || uniqueDir(getProjectsRoot(), record.name);
   ensureProjectFolders(projectDir);
   writeJson(path.join(projectDir, PROJECT_FILE), record);
   return record;

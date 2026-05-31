@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { openWorkspaceFromLibrary } from './openWorkspaceFlow'
+import { openWorkspaceFromLibrary, openWorkspaceProjectFromPicker } from './openWorkspaceFlow'
 import type { DesktopBridge } from '../../desktop/bridge'
 
 function desktopBridge(overrides: Partial<DesktopBridge['workspace']>): DesktopBridge {
@@ -74,5 +74,26 @@ describe('openWorkspaceFromLibrary', () => {
     await openWorkspaceFromLibrary({ bridge, hydrateProject: vi.fn(), confirmInitialize: vi.fn(), refreshProjects: vi.fn(), showMessage })
 
     expect(showMessage).toHaveBeenCalledWith('EACCES: permission denied', 'error')
+  })
+
+  it('passes a suggested project name when initializing from Try Now style flows', async () => {
+    const bridge = desktopBridge({
+      selectFolder: vi.fn(async () => ({ canceled: false, rootPath: '/tmp/try-now' })),
+      openFolder: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Workspace folder is not initialized'))
+        .mockResolvedValueOnce({ id: 'try-now-id' }),
+    })
+
+    const projectId = await openWorkspaceProjectFromPicker({
+      bridge,
+      name: 'Example Story',
+      confirmInitialize: vi.fn(async () => true),
+      showMessage: vi.fn(),
+    })
+
+    expect(projectId).toBe('try-now-id')
+    expect(bridge.workspace.openFolder).toHaveBeenNthCalledWith(1, { rootPath: '/tmp/try-now', initialize: false, name: 'Example Story' })
+    expect(bridge.workspace.openFolder).toHaveBeenNthCalledWith(2, { rootPath: '/tmp/try-now', initialize: true, name: 'Example Story' })
   })
 })

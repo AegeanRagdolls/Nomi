@@ -60,6 +60,7 @@ export function createWorkspaceProject(
   });
   const record = normalizeWorkspaceProjectRecord({
     ...initialized,
+    ...(typeof raw.id === "string" && raw.id.trim() ? { id: raw.id.trim() } : {}),
     lastKnownRootPath: rootPath,
   });
   writeWorkspaceManifest(rootPath, record);
