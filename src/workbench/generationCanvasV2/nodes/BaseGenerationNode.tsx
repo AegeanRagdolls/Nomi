@@ -1,7 +1,6 @@
 import React from 'react'
 import { IconCopy, IconCrop, IconFlipHorizontal, IconFlipVertical, IconGripVertical, IconGrid3x3, IconInfoCircle, IconLayoutGrid, IconMaximize, IconRotate2, IconRotateClockwise2, IconUpload } from '@tabler/icons-react'
 import ProvenancePanel from './ProvenancePanel'
-import { ErrorBadge } from './ErrorBadge'
 import { getBuiltinCategoryById } from '../../project/projectCategories'
 import CharacterCardNode from './render/CharacterCardNode'
 import SceneCardNode from './render/SceneCardNode'
@@ -19,19 +18,13 @@ import {
 import { clientXToFrame } from '../../timeline/timelineEdit'
 import { getTrackTypeForClipType } from '../../timeline/timelineTypes'
 import { buildClipFromGenerationNode } from '../model/buildClipFromGenerationNode'
-import { canRunGenerationNode, rerunGenerationNodeAsNewNode, runGenerationNode } from '../runner/generationRunController'
+import { canRunGenerationNode } from '../runner/generationRunController'
 import { WorkbenchButton } from '../../../design'
-import NodeParameterControls, { useNodeParameterControlCount } from './NodeParameterControls'
+import NodeGenerationComposer from './NodeGenerationComposer'
 import { buildVideoPlaybackUrl } from '../../../media/videoPlaybackUrl'
 import { diagnoseVideoPlaybackFailure, logVideoPlaybackFailure } from '../../../media/videoPlaybackDiagnostics'
 import PanoramaViewer, { type PanoramaScreenshot } from './PanoramaViewer'
-import { persistActiveWorkbenchProjectNow } from '../../project/workbenchProjectSession'
-import {
-  getGenerationNodeExecutionKind,
-  getGenerationNodePromptPlaceholder,
-  isImageLikeGenerationNodeKind,
-  isVideoLikeGenerationNodeKind,
-} from '../model/generationNodeKinds'
+import { getGenerationNodeExecutionKind } from '../model/generationNodeKinds'
 import {
   canDragGenerationNodeToTimeline,
   TIMELINE_DRAG_HANDLE_LABEL,
@@ -48,13 +41,6 @@ export type BaseGenerationNodeProps = {
   selected: boolean
   readOnly?: boolean
   focusFlash?: boolean
-}
-
-type FloatingComposerLayout = {
-  width: number
-  maxHeight: number
-  gap: number
-  promptRows: number
 }
 
 type ResizeDirection = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
@@ -89,29 +75,6 @@ function nodeWidthForAspectRatio(aspectRatio: number): number {
   if (aspectRatio >= 1.75) return 420
   if (aspectRatio <= 0.72) return 260
   return 340
-}
-
-function floatingComposerLayout(width: number, height: number, kind: GenerationCanvasNode['kind'], controlCount = 0): FloatingComposerLayout {
-  const aspectRatio = width / Math.max(1, height)
-  const aspectWidth = aspectRatio >= 1.55
-    ? clampNumber(Math.round(width * 0.88), 360, 560)
-    : aspectRatio <= 0.78
-      ? clampNumber(Math.round(width * 1.18), 320, 420)
-      : clampNumber(Math.round(width * 0.98), 330, 500)
-  // Widen the panel so each bottom control keeps a readable width instead of
-  // squishing into a sliver when a model exposes many params. ~92px per control
-  // + headroom for the generate button. Capped at 720 so it never runs off the
-  // canvas, then never narrower than the aspect-derived width.
-  const controlsWidth = controlCount > 0 ? controlCount * 92 + 96 : 0
-  const panelWidth = clampNumber(Math.max(aspectWidth, controlsWidth), 320, 720)
-  const maxHeight = clampNumber(Math.round(height * 0.72), 176, kind === 'video' ? 260 : 220)
-  const gap = width >= 420 ? 14 : 10
-  return {
-    width: panelWidth,
-    maxHeight,
-    gap,
-    promptRows: kind === 'video' ? 4 : width >= 420 ? 3 : 2,
-  }
 }
 
 function mediaNodeSize(width: number, height: number, preferredWidth?: number): { width: number; height: number; previewHeight: number } | null {
@@ -604,22 +567,6 @@ function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash =
     })
   }
 
-  const handleGenerate = async (event: React.MouseEvent<HTMLButtonElement>) => {
-    event.stopPropagation()
-    if (readOnly) return
-    const state = useGenerationCanvasStore.getState()
-    if (!canRunGenerationNode(node, { nodes: state.nodes, edges: state.edges })) return
-    try {
-      if (hasResult) {
-        await rerunGenerationNodeAsNewNode(node.id)
-      } else {
-        await runGenerationNode(node.id)
-      }
-    } catch {
-      // runGenerationNode records the explicit failure on the node; the card renders it below the prompt.
-    }
-  }
-
   const handleFocusSourceNode = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
     event.preventDefault()
     event.stopPropagation()
@@ -689,8 +636,6 @@ function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash =
   ) && !isGenerating
   const canSendToTimeline = canDragGenerationNodeToTimeline(node, { readOnly })
   const showStatusBadge = status === 'queued' || status === 'running' || status === 'error'
-  const composerControlCount = useNodeParameterControlCount(node)
-  const composerLayout = floatingComposerLayout(visualSize.width, visualSize.height, node.kind, composerControlCount)
 
   // v0.7.2 perf: 用 primitive 订阅 sourceNodeTitle / categoryId / exists 重组 label
   const sourceNodeLabel = sourceNodeTitle || (node.derivedFrom && !sourceNodeExists ? '源节点已不在当前项目' : (node.derivedFrom || ''))
@@ -1378,78 +1323,10 @@ function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash =
         </div>
       ) : null}
 
-      {/* composer：仅在节点被选中时浮出（含 4 类卡片）。
-          用户体验：未选中时只看图，参数框不常驻；点中节点才弹出 prompt + 参数 + 生成按钮。
-          absolute 浮在节点下方，不占用图像区垂直空间（保证图片按自身比例铺满，无外框）。 */}
+      {/* composer：仅生成类节点 + 选中时浮出（A1.5 抽成 NodeGenerationComposer）。
+          素材节点不挂它；点中节点才弹出 prompt + 参数 + 生成按钮，未选中只看图。 */}
       {selected && !readOnly && node.kind !== 'panorama' ? (
-        <div
-          className={cn(
-            'generation-canvas-v2-node__composer',
-            'flex flex-col gap-[6px]',
-            'p-[10px]',
-            'border border-nomi-line-soft rounded-nomi',
-            'bg-nomi-paper overflow-auto',
-            'absolute left-1/2 z-[8] shadow-nomi-lg -translate-x-1/2 min-h-[150px]',
-          )}
-          style={{
-            width: composerLayout.width,
-            maxHeight: composerLayout.maxHeight,
-            top: `calc(100% + ${composerLayout.gap}px)`,
-          }}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <>
-            {isImageLikeGenerationNodeKind(node.kind) || isVideoLikeGenerationNodeKind(node.kind) ? (
-                <NodeParameterControls node={node} section="references" valueOnly />
-              ) : null}
-              <textarea
-                className={cn(
-                  'generation-canvas-v2-node__prompt-input',
-                  'flex-1 w-full min-h-[38px] p-0 border-0 outline-0 resize-none',
-                  'bg-transparent text-nomi-ink font-[inherit] text-[12.5px] leading-[1.5]',
-                  'placeholder:text-nomi-ink-40',
-                )}
-                value={node.prompt}
-                rows={composerLayout.promptRows}
-                placeholder={getGenerationNodePromptPlaceholder(node.kind)}
-                onChange={(event) => updateNode(node.id, { prompt: event.currentTarget.value })}
-                onBlur={() => { void persistActiveWorkbenchProjectNow().catch(() => {}) }}
-              />
-              <div className={cn('flex items-center gap-1 mt-auto min-w-0 pt-1')}>
-                {status === 'error' && node.error ? (
-                  <ErrorBadge message={node.error} />
-                ) : null}
-                <NodeParameterControls node={node} section="parameters" valueOnly />
-                {(() => {
-                  const disabledReason = !canGenerate && !isGenerating
-                    ? nodeExecutionKind === 'video'
-                      ? '需要先连接一个图片节点作为首帧'
-                      : nodeExecutionKind === 'image'
-                        ? undefined
-                        : `「${node.kind}」类型暂不支持直接生成`
-                    : undefined
-                  return (
-                    <span title={disabledReason} style={{ display: 'contents' }}>
-                      <WorkbenchButton
-                        className={cn(
-                          'inline-flex items-center shrink-0 min-h-[24px] py-1 px-[10px]',
-                          'border-0 rounded-full bg-nomi-ink text-nomi-paper',
-                          'font-[inherit] text-[11px] font-medium whitespace-nowrap',
-                          'hover:enabled:bg-nomi-accent',
-                          'disabled:bg-nomi-ink-20 disabled:text-nomi-ink-40 disabled:cursor-not-allowed',
-                        )}
-                        aria-label="生成素材"
-                        disabled={!canGenerate}
-                        onClick={handleGenerate}
-                      >
-                        {isGenerating ? '生成中' : hasResult ? '重新生成' : '生成 →'}
-                      </WorkbenchButton>
-                    </span>
-                  )
-                })()}
-              </div>
-            </>
-        </div>
+        <NodeGenerationComposer node={node} visualSize={visualSize} />
       ) : null}
       {selected && !readOnly ? RESIZE_DIRECTIONS.map((direction) => (
         <WorkbenchButton
