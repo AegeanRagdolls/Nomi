@@ -1,4 +1,5 @@
 import type { ExportJobEvent, ExportJobSnapshot } from '../../electron/export/exportJobManager'
+import type { WorkspaceFileListResult } from '../../electron/workspace/workspaceFileIndex'
 
 export type DesktopAssetDto = {
   id: string
@@ -43,6 +44,8 @@ export type DesktopBridge = {
   workspace: {
     selectFolder: () => Promise<{ canceled: true } | { canceled: false; rootPath: string }>
     openFolder: (payload: { rootPath: string; initialize?: boolean; name?: string }) => Promise<unknown>
+    listFiles: (payload: { projectId: string; limit?: number }) => Promise<WorkspaceFileListResult>
+    revealFile: (payload: { projectId: string; relativePath: string }) => Promise<{ ok: boolean }>
   }
   projects: {
     list: () => unknown[]

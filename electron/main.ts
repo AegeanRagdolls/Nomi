@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, webContents as electronWebContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell, webContents as electronWebContents } from "electron";
 import type { WebContents } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -45,6 +45,7 @@ import {
 import { runOnboardingTrial } from "./ai/onboarding/agent";
 import type { ProviderKind, ModelKind } from "./ai/onboarding/types";
 import { openWorkspaceFolder, selectWorkspaceFolder } from "./workspace/workspaceIpc";
+import { listWorkspaceFiles, resolveWorkspaceFilePath } from "./workspace/workspaceFileIndex";
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -211,11 +212,33 @@ function registerIpc(): void {
         defaultId: 1,
         cancelId: 0,
         message: "初始化 Nomi 项目文件夹？",
-        detail: `Nomi 会在此文件夹创建 .nomi/，并把生成的图片、视频保存到 assets/ 和 exports/。\n\n${rootPath}`,
+        detail: `Nomi 会在此文件夹创建 .nomi/，并把生成的图片、视频保存到 assets/ 和 exports/.\n\n${rootPath}`,
       });
       return result.response === 1;
     },
   }));
+  ipcMain.handle("nomi:workspace:list-files", (_event, payload) => {
+    const projectId = String((payload as { projectId?: unknown } | null)?.projectId || "").trim();
+    if (!projectId) throw new Error("projectId is required");
+    const project = readProject(projectId) as { lastKnownRootPath?: unknown } | null;
+    const rootPath = typeof project?.lastKnownRootPath === "string" ? project.lastKnownRootPath : "";
+    if (!rootPath) throw new Error("Project folder is unavailable");
+    return listWorkspaceFiles({
+      rootPath,
+      maxFiles: typeof (payload as { limit?: unknown } | null)?.limit === "number" ? (payload as { limit: number }).limit : undefined,
+    });
+  });
+  ipcMain.handle("nomi:workspace:reveal-file", (_event, payload) => {
+    const projectId = String((payload as { projectId?: unknown } | null)?.projectId || "").trim();
+    const relativePath = String((payload as { relativePath?: unknown } | null)?.relativePath || "").trim();
+    if (!projectId) throw new Error("projectId is required");
+    const project = readProject(projectId) as { lastKnownRootPath?: unknown } | null;
+    const rootPath = typeof project?.lastKnownRootPath === "string" ? path.resolve(project.lastKnownRootPath) : "";
+    if (!rootPath) throw new Error("Project folder is unavailable");
+    const absolutePath = resolveWorkspaceFilePath(rootPath, relativePath);
+    shell.showItemInFolder(absolutePath);
+    return { ok: true };
+  });
   ipcMain.handle("nomi:model-catalog:mapping:test", (_event, id, payload) => testModelCatalogMapping(id, payload));
   ipcMain.handle("nomi:assets:import-remote-url", (_event, payload) => importRemoteAsset(payload));
   ipcMain.handle("nomi:assets:import-file", (_event, payload) => importLocalFile(payload));

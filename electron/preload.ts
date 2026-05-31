@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld("nomiDesktop", {
   workspace: {
     selectFolder: () => ipcRenderer.invoke("nomi:workspace:select-folder"),
     openFolder: (payload: unknown) => ipcRenderer.invoke("nomi:workspace:open-folder", payload),
+    listFiles: (payload: unknown) => ipcRenderer.invoke("nomi:workspace:list-files", payload),
+    revealFile: (payload: unknown) => ipcRenderer.invoke("nomi:workspace:reveal-file", payload),
   },
   projects: {
     list: () => invokeSync("nomi:projects:list"),
