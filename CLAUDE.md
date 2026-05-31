@@ -58,8 +58,16 @@
 
 写完用户能预读 / 反驳；执行完回填结果。
 
-## 关于工作目录
+## 关于工作目录（目录漂移——根因 + 铁律）
 
-- 仓库根：`/Users/aoqimin/Desktop/Nomi/.claude/worktrees/impl-v0.6.0/`
+- 仓库根（**唯一该动的工作树**）：`/Users/aoqimin/Desktop/Nomi/.claude/worktrees/impl-v0.6.0/`
 - 父目录 `/Users/aoqimin/Desktop/Nomi/` 是另一个 detached worktree，**不要在那里改东西或 commit**
-- 每个 Bash 命令用绝对路径或 `cd /Users/aoqimin/Desktop/Nomi/.claude/worktrees/impl-v0.6.0 &&` 开头
+
+**为什么老漂移（已定位，别再困惑）**：每次新开 shell 都从用户 profile 启动，默认目录是父目录 `/Users/aoqimin/Desktop/Nomi`（应用从那启动）。一次连续运行里 `cd` 会保持；但**上下文压缩 / 会话重启会重建 shell → cwd 弹回父目录**。所以漂移不是偶发，是结构性的。
+
+**铁律（让漂移变得不可能，而不是靠记性）**：
+- Read / Edit / Write 用的是绝对路径，**天然免疫**——文件操作不受漂移影响。
+- 只有 Bash shell 命令会中招。所以**每条 Bash 命令都必须自锚定到绝对路径**，二选一：
+  - git：用 `git -C /Users/aoqimin/Desktop/Nomi/.claude/worktrees/impl-v0.6.0 <子命令>`（不依赖 cwd）
+  - 其它（pnpm/build/test/ls…）：`cd /Users/aoqimin/Desktop/Nomi/.claude/worktrees/impl-v0.6.0 && …`
+- 永远不要发"裸" git/pnpm 命令（不带 `-C` 或 `cd` 前缀）——哪怕你"觉得"cwd 是对的。一次 `pwd` 验证 < 一次误 commit 到父树的代价。
