@@ -1,5 +1,5 @@
 import React from 'react'
-import { IconCopy, IconCrop, IconGripVertical, IconGrid3x3, IconInfoCircle, IconLayoutGrid, IconMaximize, IconUpload } from '@tabler/icons-react'
+import { IconCopy, IconCrop, IconFlipHorizontal, IconFlipVertical, IconGripVertical, IconGrid3x3, IconInfoCircle, IconLayoutGrid, IconMaximize, IconRotate2, IconRotateClockwise2, IconUpload } from '@tabler/icons-react'
 import ProvenancePanel from './ProvenancePanel'
 import { ErrorBadge } from './ErrorBadge'
 import { getBuiltinCategoryById } from '../../project/projectCategories'
@@ -206,6 +206,46 @@ async function cropImageRegion(
   return { dataUrl: canvas.toDataURL('image/png'), width: sw, height: sh }
 }
 
+type ImageTransformOp = 'rotate-left' | 'rotate-right' | 'flip-h' | 'flip-v'
+
+const IMAGE_TRANSFORM_LABEL: Record<ImageTransformOp, string> = {
+  'rotate-left': '向左旋转 90°',
+  'rotate-right': '向右旋转 90°',
+  'flip-h': '水平翻转',
+  'flip-v': '垂直翻转',
+}
+
+async function transformImage(
+  url: string,
+  op: ImageTransformOp,
+): Promise<{ dataUrl: string; width: number; height: number } | null> {
+  if (typeof document === 'undefined') return null
+  const image = await loadImageForCanvas(url)
+  const imageWidth = image.naturalWidth || image.width
+  const imageHeight = image.naturalHeight || image.height
+  if (!imageWidth || !imageHeight) return null
+  const rotated = op === 'rotate-left' || op === 'rotate-right'
+  const canvas = document.createElement('canvas')
+  canvas.width = rotated ? imageHeight : imageWidth
+  canvas.height = rotated ? imageWidth : imageHeight
+  const context = canvas.getContext('2d')
+  if (!context) return null
+  if (op === 'rotate-left' || op === 'rotate-right') {
+    context.translate(canvas.width / 2, canvas.height / 2)
+    context.rotate(op === 'rotate-right' ? Math.PI / 2 : -Math.PI / 2)
+    context.drawImage(image, -imageWidth / 2, -imageHeight / 2)
+  } else if (op === 'flip-h') {
+    context.translate(imageWidth, 0)
+    context.scale(-1, 1)
+    context.drawImage(image, 0, 0)
+  } else {
+    context.translate(0, imageHeight)
+    context.scale(1, -1)
+    context.drawImage(image, 0, 0)
+  }
+  return { dataUrl: canvas.toDataURL('image/png'), width: canvas.width, height: canvas.height }
+}
+
 function findTimelineDropTarget(clientX: number, clientY: number): HTMLElement | null {
   // v0.7.3 fix: elementsFromPoint (plural) 返回所有重叠元素，
   // 跳过被拖动的卡片本身（topmost）找下方的时间轴。
@@ -259,6 +299,7 @@ function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash =
   const panoramaFourViewRef = React.useRef<(() => void) | null>(null)
   const [splittingGridSize, setSplittingGridSize] = React.useState<ImageGridSize | null>(null)
   const [cropMode, setCropMode] = React.useState(false)
+  const [imageOpBusy, setImageOpBusy] = React.useState(false)
   // E11: provenance viewer open state (mounted into node header for AI-generated assets)
   const [provenanceOpen, setProvenanceOpen] = React.useState(false)
   const dragStartRef = React.useRef<{
@@ -833,6 +874,68 @@ function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash =
     visualSize.width,
   ])
 
+  // 旋转 / 翻转：同款「跳出新节点」原则 —— canvas 处理后派生新 image 节点，原图保留。
+  const handleImageTransform = React.useCallback(async (op: ImageTransformOp) => {
+    const imageUrl = node.result?.type === 'image' ? node.result.url : undefined
+    if (!imageUrl || imageOpBusy) return
+    setImageOpBusy(true)
+    try {
+      const out = await transformImage(imageUrl, op)
+      if (!out) return
+      const createdAt = Date.now()
+      const preferredWidth = clampNumber(visualSize.width, MIN_NODE_WIDTH, MAX_NODE_WIDTH)
+      const newSize = imageGridTileNodeSize(out.width, out.height, preferredWidth)
+      const opNode = addNode({
+        kind: 'image',
+        title: `${node.title || '图片'} ${IMAGE_TRANSFORM_LABEL[op]}`,
+        prompt: IMAGE_TRANSFORM_LABEL[op],
+        position: {
+          x: Math.round(node.position.x + visualSize.width + 80),
+          y: Math.round(node.position.y),
+        },
+        select: true,
+      })
+      const result = {
+        id: `image-${op}-${opNode.id}-${createdAt}`,
+        type: 'image' as const,
+        url: out.dataUrl,
+        createdAt,
+      }
+      updateNode(opNode.id, {
+        result,
+        history: [result],
+        status: 'success',
+        ...(newSize ? { size: { width: newSize.width, height: newSize.height } } : {}),
+        meta: {
+          ...(opNode.meta || {}),
+          source: `image-${op}`,
+          sourceNodeId: node.id,
+          localOnly: true,
+          imageWidth: out.width,
+          imageHeight: out.height,
+          imageAspectRatio: out.width / Math.max(1, out.height),
+          previewHeight: newSize?.previewHeight,
+        },
+      })
+      storeConnectNodes(node.id, opNode.id, 'reference')
+    } catch {
+      // Transform can fail if the source image cannot be loaded into a canvas due to CORS.
+    } finally {
+      setImageOpBusy(false)
+    }
+  }, [
+    addNode,
+    imageOpBusy,
+    node.id,
+    node.position.x,
+    node.position.y,
+    node.result,
+    node.title,
+    storeConnectNodes,
+    updateNode,
+    visualSize.width,
+  ])
+
   return (
     <article
       className={cn(
@@ -1026,6 +1129,31 @@ function BaseGenerationNodeImpl({ node, selected, readOnly = false, focusFlash =
             <IconCrop size={16} stroke={1.8} />
             <span>裁剪</span>
           </button>
+          <span className={cn('w-px h-[22px] bg-[rgba(18,24,38,0.1)]')} />
+          {([
+            { op: 'rotate-left' as const, Icon: IconRotate2 },
+            { op: 'rotate-right' as const, Icon: IconRotateClockwise2 },
+            { op: 'flip-h' as const, Icon: IconFlipHorizontal },
+            { op: 'flip-v' as const, Icon: IconFlipVertical },
+          ]).map(({ op, Icon }) => (
+            <button
+              key={op}
+              className={cn(
+                'inline-flex items-center justify-center',
+                'min-w-0 w-[34px] min-h-[34px] border-0 rounded-[9px]',
+                'bg-transparent text-nomi-ink-80 cursor-pointer',
+                'hover:bg-nomi-ink-05 hover:text-nomi-ink',
+                'disabled:opacity-[0.45] disabled:cursor-wait',
+              )}
+              type="button"
+              aria-label={IMAGE_TRANSFORM_LABEL[op]}
+              title={`${IMAGE_TRANSFORM_LABEL[op]}（生成一个新节点，原图保留）`}
+              disabled={imageOpBusy || cropMode || splittingGridSize !== null}
+              onClick={() => { void handleImageTransform(op) }}
+            >
+              <Icon size={16} stroke={1.8} />
+            </button>
+          ))}
         </div>
       ) : null}
 

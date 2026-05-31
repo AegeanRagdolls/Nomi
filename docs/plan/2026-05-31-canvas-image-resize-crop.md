@@ -78,3 +78,14 @@ Part A 后节点框恒 = 图片比例，preview ≈ 无 letterbox，故裁剪框
   - 图片工具条加「裁剪」按钮；`handleCropConfirm` 完全照 `handleImageGridSplit` 模式：canvas 裁出 → `addNode` 新 image 节点（右侧）→ `meta.source='image-crop'`+`sourceNodeId` → `connectNodes(reference)`。**原节点零改动**。
 
 验收：前端 tsc 我改文件 0 新错、`pnpm test` 339 全绿、`build:renderer` 通过。待用户目视确认：拉伸等比无空框；裁剪后右侧生成新节点、原图保留、新节点可继续操作。
+
+## 8. 旋转 + 翻转（用户复盘后选定，同款「跳出新节点」原则）
+
+用户问哪些图片处理特别需要。结论：旋转 90°(左/右) + 水平/垂直翻转 —— 零外部依赖、纯 canvas、即刻有用，且能完全套用裁剪的派生模式。抠图/超分/inpaint 需先定外部能力，单独立项，本轮不做。
+
+- 新增 `transformImage(url, op)`（op = rotate-left | rotate-right | flip-h | flip-v）：canvas 变换 → `toDataURL`；旋转 90° 时宽高互换。
+- 新增 `handleImageTransform(op)`：照 `handleCropConfirm` 模式 —— canvas 处理 → `addNode` 新 image 节点（右侧）→ `meta.source='image-<op>'`+`sourceNodeId` → `connectNodes(reference)`。原节点零改动。
+- 图片工具条加 4 个**图标按钮**（左转/右转/水平翻转/垂直翻转，icon-only 保持工具条紧凑）。
+- 单 busy 状态防重复点击。
+
+验收：tsc 0 新错、`pnpm test` 全绿、build 通过；旋转/翻转各生成一个方向正确的新节点、原图保留。
