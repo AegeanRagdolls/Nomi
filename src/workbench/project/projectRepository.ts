@@ -409,6 +409,7 @@ function seedDocFromMarkdown(markdown: string): unknown {
 export function createLocalProject(
     name?: string,
     templateId?: string,
+    options: { rootPath?: string } = {},
 ): WorkbenchProjectRecordV1 {
     const now = Date.now();
     const template = getProjectTemplate(templateId || null);

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, protocol, webContents as electronWebContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, net, protocol, webContents as electronWebContents } from "electron";
 import type { WebContents } from "electron";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -44,6 +44,7 @@ import {
 } from "./runtime";
 import { runOnboardingTrial } from "./ai/onboarding/agent";
 import type { ProviderKind, ModelKind } from "./ai/onboarding/types";
+import { openWorkspaceFolder, selectWorkspaceFolder } from "./workspace/workspaceIpc";
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -168,8 +169,14 @@ function registerSyncIpc<TArgs extends unknown[], TResult>(
 }
 
 function registerIpc(): void {
+  const selectedWorkspaceRoots = new Set<string>();
   registerSyncIpc("nomi:projects:list", listProjects);
-  registerSyncIpc("nomi:projects:create", createProject);
+  registerSyncIpc("nomi:projects:create", (record: unknown) => {
+    if (record && typeof record === "object" && typeof (record as { rootPath?: unknown }).rootPath === "string") {
+      throw new Error("Use nomi:workspace:open-folder to create or open folder-backed projects");
+    }
+    return createProject(record);
+  });
   registerSyncIpc("nomi:projects:read", readProject);
   registerSyncIpc("nomi:projects:save", saveProject);
   registerSyncIpc("nomi:projects:delete", deleteProject);
@@ -189,6 +196,26 @@ function registerIpc(): void {
   registerSyncIpc("nomi:model-catalog:import", importModelCatalogPackage);
 
   ipcMain.handle("nomi:model-catalog:docs:fetch", (_event, payload) => fetchModelCatalogDocs(payload));
+  ipcMain.handle("nomi:workspace:select-folder", async () => {
+    const selection = await selectWorkspaceFolder({ showOpenDialog: (options) => dialog.showOpenDialog(options) });
+    if (!selection.canceled) selectedWorkspaceRoots.add(selection.rootPath);
+    return selection;
+  });
+  ipcMain.handle("nomi:workspace:open-folder", (_event, payload) => openWorkspaceFolder(payload, {
+    createProject,
+    selectedRootPaths: selectedWorkspaceRoots,
+    confirmInitialize: async (rootPath) => {
+      const result = await dialog.showMessageBox({
+        type: "question",
+        buttons: ["取消", "初始化"],
+        defaultId: 1,
+        cancelId: 0,
+        message: "初始化 Nomi 项目文件夹？",
+        detail: `Nomi 会在此文件夹创建 .nomi/，并把生成的图片、视频保存到 assets/ 和 exports/。\n\n${rootPath}`,
+      });
+      return result.response === 1;
+    },
+  }));
   ipcMain.handle("nomi:model-catalog:mapping:test", (_event, id, payload) => testModelCatalogMapping(id, payload));
   ipcMain.handle("nomi:assets:import-remote-url", (_event, payload) => importRemoteAsset(payload));
   ipcMain.handle("nomi:assets:import-file", (_event, payload) => importLocalFile(payload));

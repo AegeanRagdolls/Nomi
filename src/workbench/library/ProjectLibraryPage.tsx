@@ -1,5 +1,5 @@
 import React from 'react'
-import { IconMovie, IconSparkles, IconTrash } from '@tabler/icons-react'
+import { IconFolderOpen, IconMovie, IconSparkles, IconTrash } from '@tabler/icons-react'
 import { cn } from '../../utils/cn'
 import { NomiLogoMark } from '../../design'
 import type { LocalProjectSummary } from './localProjectStore'
@@ -10,6 +10,7 @@ type Props = {
   onOpenProject: (projectId: string) => void
   onDeleteProject: (project: LocalProjectSummary) => void
   onNewProject: (templateId?: ProjectTemplateId) => void
+  onOpenFolder?: () => void
   onTryExample?: (example: TryNowExample) => void
   projects: LocalProjectSummary[]
 }
@@ -104,7 +105,7 @@ function ThumbnailMosaic({ urls }: { urls: string[] }): JSX.Element {
   )
 }
 
-export default function ProjectLibraryPage({ onOpenProject, onDeleteProject, onNewProject, onTryExample, projects }: Props): JSX.Element {
+export default function ProjectLibraryPage({ onOpenProject, onDeleteProject, onNewProject, onOpenFolder, onTryExample, projects }: Props): JSX.Element {
   const [query, setQuery] = React.useState('')
   const normalizedQuery = query.trim().toLowerCase()
   const filteredProjects = normalizedQuery
@@ -208,7 +209,7 @@ export default function ProjectLibraryPage({ onOpenProject, onDeleteProject, onN
               'active:translate-y-0 active:shadow-none',
             )}
             type="button"
-            onClick={onNewProject}
+            onClick={() => onNewProject()}
           >
             <div className={cn(
               'aspect-video relative overflow-hidden',
@@ -232,6 +233,40 @@ export default function ProjectLibraryPage({ onOpenProject, onDeleteProject, onN
               <div className="text-[13px] font-medium text-nomi-ink-60 truncate mb-0.5 group-hover:text-nomi-accent">新建项目</div>
             </div>
           </button>
+
+          {onOpenFolder ? (
+            <button
+              className={cn(
+                'group bg-nomi-paper border border-nomi-line rounded-nomi-lg overflow-hidden cursor-pointer text-left font-inherit',
+                'transition-[box-shadow,transform,border-color] duration-150',
+                'hover:shadow-nomi-md hover:border-[var(--nomi-ink-20)] hover:-translate-y-0.5',
+                'active:translate-y-0 active:shadow-none',
+              )}
+              type="button"
+              onClick={onOpenFolder}
+            >
+              <div className={cn(
+                'aspect-video relative overflow-hidden',
+                'flex items-center justify-center bg-nomi-bg transition-colors duration-150',
+                'group-hover:bg-[color-mix(in_oklch,var(--nomi-accent)_6%,var(--nomi-bg))]',
+              )}>
+                <div className={cn(
+                  'w-10 h-10 rounded-full bg-nomi-paper border border-nomi-line',
+                  'grid place-items-center text-nomi-ink-40',
+                  'transition-[border-color,color,background] duration-150',
+                  'group-hover:bg-[color-mix(in_oklch,var(--nomi-accent)_10%,var(--nomi-paper))]',
+                  'group-hover:border-[color-mix(in_oklch,var(--nomi-accent)_40%,transparent)]',
+                  'group-hover:text-nomi-accent',
+                )}>
+                  <IconFolderOpen size={21} stroke={1.8} aria-hidden="true" />
+                </div>
+              </div>
+              <div className="px-[13px] pt-[10px] pb-3">
+                <div className="text-[13px] font-medium text-nomi-ink-60 truncate mb-0.5 group-hover:text-nomi-accent">打开文件夹</div>
+                <div className="text-[11.5px] text-nomi-ink-40 truncate">选择已有目录作为项目空间</div>
+              </div>
+            </button>
+          ) : null}
 
           {filteredProjects.map((project) => {
             const urls = project.thumbnailUrls || (project.thumbnail ? [project.thumbnail] : [])

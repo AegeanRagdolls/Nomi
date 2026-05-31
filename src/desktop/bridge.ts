@@ -40,6 +40,10 @@ export type { ExportJobEvent, ExportJobSnapshot }
 
 export type DesktopBridge = {
   platform: string
+  workspace: {
+    selectFolder: () => Promise<{ canceled: true } | { canceled: false; rootPath: string }>
+    openFolder: (payload: { rootPath: string; initialize?: boolean; name?: string }) => Promise<unknown>
+  }
   projects: {
     list: () => unknown[]
     create: (record: unknown) => unknown

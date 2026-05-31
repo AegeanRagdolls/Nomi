@@ -20,7 +20,9 @@ import { useWorkspaceEvents } from './useWorkspaceEvents'
 import { cn } from '../utils/cn'
 import { toast } from '../ui/toast'
 import { setDesktopActiveProjectId } from '../desktop/activeProject'
+import { getDesktopBridge } from '../desktop/bridge'
 import { buildStudioUrl } from '../utils/appRoutes'
+import { openWorkspaceFromLibrary } from './library/openWorkspaceFlow'
 
 type AppView = 'library' | 'studio'
 
@@ -37,7 +39,7 @@ export default function NomiStudioApp(): JSX.Element {
   const navigate = useNavigate()
   const location = useLocation()
   const [view, setView] = React.useState<AppView>('library')
-  const { projects } = useLocalProjects()
+  const { projects, refreshProjects } = useLocalProjects()
   const [activeProject, setActiveProject] = React.useState<LocalProjectSummary | null>(null)
   const [generationAiCollapsed, setGenerationAiCollapsed] = React.useState(true)
   const [modelCatalogOpened, setModelCatalogOpened] = React.useState(false)
@@ -102,10 +104,27 @@ export default function NomiStudioApp(): JSX.Element {
     void hydrateProject(projectId)
   }, [hydrateProject])
 
+  const openWorkspaceFolder = React.useCallback(async () => {
+    await openWorkspaceFromLibrary({
+      bridge: getDesktopBridge(),
+      hydrateProject,
+      refreshProjects,
+      confirmInitialize: async (rootPath) => window.confirm(
+        `将此文件夹初始化为 Nomi 项目？\n\n${rootPath}\n\nNomi 会创建 .nomi/，并把生成的图片、视频保存到 assets/ 和 exports/。`,
+      ),
+      showMessage: (message, tone) => toast(message, tone || 'error'),
+    })
+  }, [hydrateProject, refreshProjects])
+
   const newProject = React.useCallback(async () => {
+    const desktop = getDesktopBridge()
+    if (desktop?.workspace) {
+      await openWorkspaceFolder()
+      return
+    }
     const project = createLocalProject()
     void hydrateProject(project.id)
-  }, [hydrateProject])
+  }, [hydrateProject, openWorkspaceFolder])
 
   /**
    * Try-Now hero handler (C6). Creates a fresh project, hydrates it,
@@ -238,6 +257,7 @@ export default function NomiStudioApp(): JSX.Element {
           onOpenProject={openProject}
           onDeleteProject={deleteProject}
           onNewProject={() => void newProject()}
+          onOpenFolder={() => void openWorkspaceFolder()}
           onTryExample={(example) => void tryExample(example)}
         />
         <ToastHost />
