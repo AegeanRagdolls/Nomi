@@ -91,8 +91,17 @@ export function listWorkspaceFiles(input: { rootPath: string; maxFiles?: number;
 
   function scanDir(dir: string): WorkspaceFileNode[] {
     if (truncated) return [];
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      // Unreadable directory — e.g. macOS TCC-protected library bundles such as
+      // ~/Music/Music or ~/Pictures/Photos Library.photoslibrary throw EPERM even
+      // with Full Disk Access. Skip its contents instead of failing the whole listing.
+      return [];
+    }
     const nodes: WorkspaceFileNode[] = [];
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    for (const entry of entries) {
       if (truncated) break;
       if (!input.includeHidden && entry.name.startsWith(".")) continue;
       if (SKIPPED_NAMES.has(entry.name)) continue;
@@ -105,7 +114,13 @@ export function listWorkspaceFiles(input: { rootPath: string; maxFiles?: number;
         truncated = true;
         break;
       }
-      const stat = fs.statSync(absolutePath);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(absolutePath);
+      } catch {
+        // Unreadable entry (permission denied / vanished mid-scan) — skip it.
+        continue;
+      }
       if (entry.isDirectory()) {
         nodes.push({
           id: relativePath,

@@ -76,6 +76,24 @@ describe("workspace file index", () => {
     expect(result.items).toHaveLength(2);
   });
 
+  const canTestUnreadable = process.platform !== "win32" && typeof process.getuid === "function" && process.getuid() !== 0;
+  (canTestUnreadable ? it : it.skip)("skips unreadable subdirectories instead of failing the whole listing", () => {
+    const root = makeTempDir();
+    write(root, "visible.txt");
+    write(root, "locked/secret.txt", "secret");
+    const lockedDir = path.join(root, "locked");
+    fs.chmodSync(lockedDir, 0o000);
+    try {
+      const tree = listWorkspaceFiles({ rootPath: root }).items;
+      const locked = tree.find((node) => node.relativePath === "locked");
+      expect(tree.find((node) => node.relativePath === "visible.txt")).toBeTruthy();
+      // The protected directory itself still appears, but its unreadable contents are skipped.
+      expect(locked?.children).toEqual([]);
+    } finally {
+      fs.chmodSync(lockedDir, 0o755);
+    }
+  });
+
   it("rejects reveal paths that are absolute malformed traversal or symlink escapes", () => {
     const root = makeTempDir();
     const outside = makeTempDir();
