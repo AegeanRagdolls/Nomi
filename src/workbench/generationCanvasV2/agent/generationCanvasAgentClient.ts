@@ -156,9 +156,10 @@ async function defaultExecuteToolCall(event: ToolCallEvent): Promise<void> {
       return
     }
     if (toolName === 'delete_canvas_nodes') {
-      // Not yet implemented as a renderer-side mutation; reject gracefully so
-      // the agent can adapt rather than silently no-op.
-      await confirm({ ok: false, message: 'delete_canvas_nodes is not yet implemented' })
+      const payload = args as { nodeIds?: unknown }
+      const nodeIds = Array.isArray(payload.nodeIds) ? payload.nodeIds.map((id) => String(id || '').trim()).filter(Boolean) : []
+      const deleted = generationCanvasTools.delete_nodes(nodeIds)
+      await confirm({ ok: true, result: { deletedNodeIds: deleted } })
       return
     }
     await confirm({ ok: false, message: `unknown tool ${toolName}` })

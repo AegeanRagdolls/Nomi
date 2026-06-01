@@ -32,6 +32,7 @@ export type GenerationCanvasToolAction =
   | { tool: 'read_node_context'; nodeId: string }
   | { tool: 'create_nodes'; nodes: CreateGenerationNodeToolInput[] }
   | { tool: 'connect_nodes'; edges: Array<Pick<GenerationCanvasEdge, 'source' | 'target'>> }
+  | { tool: 'delete_nodes'; nodeIds: string[] }
   | { tool: 'update_node_prompt'; nodeId: string; prompt: string }
   | { tool: 'set_node_references'; nodeId: string; references: string[] }
   | { tool: 'generate_image'; nodeId: string; confirmed?: boolean }
@@ -63,6 +64,12 @@ export const generationCanvasTools = {
   connect_nodes(edges: Array<Pick<GenerationCanvasEdge, 'source' | 'target'>>) {
     edges.forEach((edge) => useGenerationCanvasStore.getState().connectNodes(edge.source, edge.target))
     return useGenerationCanvasStore.getState().edges
+  },
+  delete_nodes(nodeIds: string[]): string[] {
+    const existing = new Set(useGenerationCanvasStore.getState().nodes.map((node) => node.id))
+    const deleted = Array.from(new Set(nodeIds.map((id) => String(id || '').trim()).filter((id) => id && existing.has(id))))
+    deleted.forEach((id) => useGenerationCanvasStore.getState().deleteNode(id))
+    return deleted
   },
   update_node_prompt(nodeId: string, prompt: string) {
     useGenerationCanvasStore.getState().updateNodePrompt(nodeId, prompt)
@@ -115,6 +122,10 @@ export const generationCanvasTools = {
     if (action.tool === 'connect_nodes') {
       const edges = generationCanvasTools.connect_nodes(action.edges)
       return toolResult({ ok: true, tool: action.tool, message: `连接节点：${action.edges.length} 条`, data: edges })
+    }
+    if (action.tool === 'delete_nodes') {
+      const deleted = generationCanvasTools.delete_nodes(action.nodeIds)
+      return toolResult({ ok: true, tool: action.tool, message: `删除节点：${deleted.length} 个`, data: deleted })
     }
     if (action.tool === 'update_node_prompt') {
       const node = generationCanvasTools.update_node_prompt(action.nodeId, action.prompt)

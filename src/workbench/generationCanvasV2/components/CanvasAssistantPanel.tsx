@@ -195,7 +195,9 @@ export default function CanvasAssistantPanel({
       return { nodeId: node.id }
     }
     if (toolName === 'delete_canvas_nodes') {
-      throw new Error('delete_canvas_nodes is not yet implemented')
+      const nodeIds = Array.isArray(record.nodeIds) ? record.nodeIds.map((id) => String(id || '').trim()).filter(Boolean) : []
+      const deleted = generationCanvasTools.delete_nodes(nodeIds)
+      return { deletedNodeIds: deleted }
     }
     throw new Error(`unknown tool ${toolName}`)
   }, [])
