@@ -98,6 +98,7 @@ export type DesktopBridge = {
       decision: { ok: true; result?: unknown } | { ok: false; message?: string },
     ) => Promise<{ ok: boolean; error?: string }>
     cancelChatV2: (sessionId: string) => Promise<{ ok: boolean; error?: string }>
+    clearChatV2Session: (sessionKey: string) => Promise<{ ok: boolean; error?: string }>
     onChatV2Event: (sessionId: string, callback: (event: unknown) => void) => () => void
   }
   onboarding: {

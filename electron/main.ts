@@ -24,6 +24,7 @@ import {
   resolveProjectRelativePath,
   runAgentChat,
   runAgentChatV2,
+  clearAgentChatV2History,
   runTask,
   saveProject,
   showExportInFolder,
@@ -381,6 +382,13 @@ function registerAgentChatV2Ipc(): void {
       pending.resolve({ ok: false, message: "session cancelled" });
       session.pendingConfirmations.delete(toolCallId);
     }
+    return { ok: true };
+  });
+
+  // "新对话" — wipe the shared conversation memory for a sessionKey so the next
+  // turn starts fresh (no key = wipe all).
+  ipcMain.handle("nomi:agents:chatV2:clearSession", async (_event, payload: { sessionKey?: string }) => {
+    clearAgentChatV2History(payload?.sessionKey);
     return { ok: true };
   });
 }

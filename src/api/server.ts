@@ -410,6 +410,11 @@ export async function workbenchAgentsChat(payload: AgentsChatRequestDto): Promis
   return createDesktopAgentResponse(await requireDesktopRuntime('workbench agents chat').agents.chat(payload))
 }
 
+/** Wipe the shared backend conversation memory for a sessionKey ("新对话"). */
+export async function clearWorkbenchAgentSession(sessionKey: string): Promise<void> {
+  await requireDesktopRuntime('clear agent session').agents.clearChatV2Session(sessionKey)
+}
+
 export async function listModelCatalogVendors(): Promise<ModelCatalogVendorDto[]> {
   return requireDesktopRuntime('model catalog').modelCatalog.listVendors() as ModelCatalogVendorDto[]
 }

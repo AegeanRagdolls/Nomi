@@ -3,7 +3,8 @@ import { IconCursorText, IconFilePlus, IconMovie, IconReplace, IconSend2 } from 
 import { NomiAILabel, NomiLoadingMark, WorkbenchButton, WorkbenchIconButton } from '../../design'
 import ReactMarkdown from 'react-markdown'
 import { cn } from '../../utils/cn'
-import { runWorkbenchAgent, type ToolCallEvent } from '../ai/workbenchAgentRunner'
+import { runWorkbenchAgent, workbenchSessionKey, type ToolCallEvent } from '../ai/workbenchAgentRunner'
+import { clearWorkbenchAgentSession } from '../../api/server'
 import { AiReplyActionButton } from '../ai/AiReplyActionButton'
 import { handleAiComposerKeyDown } from '../ai/aiComposerKeyboard'
 import type { WorkbenchAiMessage } from '../ai/workbenchAiTypes'
@@ -190,12 +191,11 @@ export default function CreationAiPanel(): JSX.Element {
     setError('')
     setSending(true)
     try {
-      const projectId = readUrlParam('projectId')
       const response = await runWorkbenchAgent({
         prompt,
         displayPrompt,
-        sessionKey: `nomi:workbench:${projectId || 'local'}`,
-        projectId,
+        sessionKey: workbenchSessionKey(),
+        projectId: readUrlParam('projectId'),
         skillKey: `workbench.creation.${activeMode.id}`,
         skillName: activeMode.title,
         onContent: (_delta, streamedText) => {
@@ -252,6 +252,8 @@ export default function CreationAiPanel(): JSX.Element {
   const handleNewConversation = React.useCallback(() => {
     setPendingToolCalls([])
     resetConversation()
+    // Wipe the shared backend memory so both areas start a fresh thread.
+    void clearWorkbenchAgentSession(workbenchSessionKey())
   }, [resetConversation])
 
   return (

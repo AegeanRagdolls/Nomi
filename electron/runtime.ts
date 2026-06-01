@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { hardenedFetch, hardenedFetchText } from "./hardenedFetch";
-import { generateText, streamText, tool } from "ai";
+import { generateText, streamText, tool, type CoreMessage } from "ai";
 import { z } from "zod";
 import { buildAiSdkModel } from "./ai/buildAiSdkModel";
 import { mergeMissingParamsIntoBody } from "./ai/onboarding/curlBlueprint";
@@ -2706,7 +2706,46 @@ export type RunAgentChatV2Payload = {
   chatContext?: unknown;
   mode?: string;
   temperature?: number;
+  /**
+   * Shared conversation memory key. Both workbench panels use
+   * `nomi:workbench:<projectId|local>` so the agent remembers across turns and
+   * across the creation / generation areas. Omitted = no memory (one-shot).
+   */
+  sessionKey?: string;
+  /** Drop any stored history for this sessionKey before running ("新对话"). */
+  resetSession?: boolean;
 };
+
+// In-memory conversation history, keyed by sessionKey. Lives only for the app
+// session (cleared on quit). Capped per key so prompts can't grow unbounded.
+const AGENT_HISTORY_MAX_MESSAGES = 30;
+const agentChatV2History = new Map<string, CoreMessage[]>();
+
+/** Drop stored history for a session (or all sessions when no key given). */
+export function clearAgentChatV2History(sessionKey?: string): void {
+  if (sessionKey && sessionKey.trim()) {
+    agentChatV2History.delete(sessionKey.trim());
+  } else {
+    agentChatV2History.clear();
+  }
+}
+
+/**
+ * Cap stored history to the most recent N messages. Slicing can decapitate a
+ * tool-call/tool-result pair, so after trimming we also drop any leading
+ * `tool` messages (orphaned results the provider would reject) — and the
+ * assistant tool-call message they belonged to, advancing to the next clean
+ * `user` boundary if needed.
+ */
+function capAgentHistory(messages: CoreMessage[]): CoreMessage[] {
+  let trimmed = messages.length > AGENT_HISTORY_MAX_MESSAGES
+    ? messages.slice(messages.length - AGENT_HISTORY_MAX_MESSAGES)
+    : messages;
+  while (trimmed.length > 0 && trimmed[0].role === "tool") {
+    trimmed = trimmed.slice(1);
+  }
+  return trimmed;
+}
 
 export async function runAgentChatV2(
   payload: RunAgentChatV2Payload,
@@ -2739,10 +2778,19 @@ export async function runAgentChatV2(
     readRequestedSkill(payload as unknown as JsonRecord).key || trim(payload.skillKey);
   const tools = buildToolsForSkill(resolvedSkillKey, hooks);
 
+  // Replay stored history for this session so the agent remembers prior turns
+  // (within a panel and across the creation / generation areas, which share a
+  // sessionKey). "新对话" sends resetSession to wipe it first.
+  const sessionKey = trim(payload.sessionKey);
+  if (sessionKey && payload.resetSession) agentChatV2History.delete(sessionKey);
+  const priorMessages = sessionKey ? agentChatV2History.get(sessionKey) ?? [] : [];
+  const userMessage: CoreMessage = { role: "user", content: userPrompt };
+  const messages: CoreMessage[] = [...priorMessages, userMessage];
+
   const result = streamText({
     model: languageModel,
     ...(system ? { system } : {}),
-    messages: [{ role: "user", content: userPrompt }],
+    messages,
     temperature: typeof payload.temperature === "number" ? payload.temperature : 0.7,
     tools,
     maxSteps: 5,
@@ -2777,6 +2825,13 @@ export async function runAgentChatV2(
   }
 
   hooks.emit({ type: "finish", finishReason: finalFinish, usage: finalUsage });
+
+  // Persist this turn (user message + everything the model generated, incl.
+  // tool-call / tool-result messages) so the next turn has full context.
+  if (sessionKey) {
+    const generated = (await result.response).messages as CoreMessage[];
+    agentChatV2History.set(sessionKey, capAgentHistory([...priorMessages, userMessage, ...generated]));
+  }
 
   return {
     id: `agent-${crypto.randomUUID()}`,

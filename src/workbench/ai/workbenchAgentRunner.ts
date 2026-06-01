@@ -14,6 +14,23 @@ import { sendWorkbenchAiMessage } from './workbenchAiClient'
  * confirmation card and confirm only after the user approves.
  */
 
+/**
+ * Both workbench panels (创作区 + 生成区) share one backend memory key so the
+ * agent remembers across turns AND across the two areas. Keyed by project so
+ * different projects don't bleed context.
+ */
+export function workbenchSessionKey(): string {
+  let projectId = ''
+  if (typeof window !== 'undefined') {
+    try {
+      projectId = String(new URL(window.location.href).searchParams.get('projectId') || '').trim()
+    } catch {
+      projectId = ''
+    }
+  }
+  return `nomi:workbench:${projectId || 'local'}`
+}
+
 export type ToolCallEvent = {
   toolCallId: string
   toolName: string

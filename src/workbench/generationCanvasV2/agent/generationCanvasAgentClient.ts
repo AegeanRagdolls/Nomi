@@ -1,5 +1,5 @@
 import type { AgentsChatResponseDto } from '../../../api/server'
-import { runWorkbenchAgent, type ToolCallEvent } from '../../ai/workbenchAgentRunner'
+import { runWorkbenchAgent, workbenchSessionKey, type ToolCallEvent } from '../../ai/workbenchAgentRunner'
 import type { GenerationCanvasSnapshot, GenerationCanvasNode, GenerationNodeKind } from '../model/generationCanvasTypes'
 import { getAgentCreatableGenerationNodeKinds, getGenerationNodeDefaultTitle } from '../model/generationNodeKinds'
 import { generationCanvasTools, type CreateGenerationNodeToolInput } from './generationCanvasTools'
@@ -39,15 +39,6 @@ export type GenerationCanvasAgentResponse = {
 
 function stringifyForPrompt(value: unknown): string {
   return JSON.stringify(value, null, 2)
-}
-
-function readProjectIdParam(): string {
-  if (typeof window === 'undefined') return ''
-  try {
-    return String(new URL(window.location.href).searchParams.get('projectId') || '').trim()
-  } catch {
-    return ''
-  }
 }
 
 function buildGenerationCanvasAgentPrompt(input: SendGenerationCanvasAgentMessageInput): string {
@@ -179,12 +170,10 @@ export async function sendGenerationCanvasAgentMessage(
     ? input.buildPrompt({ message: input.message, snapshot: input.snapshot, selectedNodes: input.selectedNodes })
     : buildGenerationCanvasAgentPrompt(input)
 
-  const projectId = readProjectIdParam()
   const response = await runWorkbenchAgent({
     prompt,
     displayPrompt: input.message,
-    sessionKey: `nomi:workbench:${projectId || 'local'}`,
-    projectId,
+    sessionKey: workbenchSessionKey(),
     skillKey: input.skill?.key || 'workbench.generation.canvas-planner',
     skillName: input.skill?.name || '生成区节点规划',
     onContent: input.onContent,

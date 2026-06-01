@@ -6,6 +6,8 @@ import {
   sendGenerationCanvasAgentMessage,
   type ToolCallEvent,
 } from '../agent/generationCanvasAgentClient'
+import { workbenchSessionKey } from '../../ai/workbenchAgentRunner'
+import { clearWorkbenchAgentSession } from '../../../api/server'
 import { generationCanvasTools } from '../agent/generationCanvasTools'
 import {
   buildStoryboardPlanningMessage,
@@ -311,7 +313,10 @@ export default function CanvasAssistantPanel({
   }, [setCollapsed, submitAgentMessage])
 
   const handleNewConversation = React.useCallback(() => {
+    setPendingToolCalls([])
     resetConversation()
+    // Wipe the shared backend memory so both areas start a fresh thread.
+    void clearWorkbenchAgentSession(workbenchSessionKey())
   }, [resetConversation])
 
   if (collapsed) {
