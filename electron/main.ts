@@ -434,6 +434,9 @@ function registerOnboardingIpc(): void {
       baseUrl: String(agentConfig.baseUrl || fromCatalog?.baseUrl || process.env.NOMI_ONBOARDING_AGENT_BASE_URL || ""),
       modelId: String(agentConfig.modelId || fromCatalog?.modelId || process.env.NOMI_ONBOARDING_AGENT_MODEL || ""),
       apiKey: String(agentConfig.apiKey || fromCatalog?.apiKey || process.env.NOMI_ONBOARDING_AGENT_KEY || ""),
+      // Replay the catalog vendor's custom headers so the doc-reader reaches the
+      // same relay/proxy gateway the user's text model is behind.
+      ...(fromCatalog?.extraHeaders ? { extraHeaders: fromCatalog.extraHeaders } : {}),
     };
     if (!agent.baseUrl || !agent.modelId || !agent.apiKey) {
       throw new Error(
@@ -503,10 +506,20 @@ function registerOnboardingIpc(): void {
   // path. No forced connectivity test (aligns with opencode; see test-connection).
   ipcMain.handle("nomi:onboarding:manual-commit", async (_event, payload: Record<string, unknown>) => {
     try {
+      const providerKind =
+        payload?.providerKind === "anthropic" ? "anthropic" : "openai-compatible";
+      const headers: Record<string, string> = {};
+      if (payload?.headers && typeof payload.headers === "object") {
+        for (const [k, v] of Object.entries(payload.headers as Record<string, unknown>)) {
+          headers[String(k)] = String(v ?? "");
+        }
+      }
       const result = commitManualOpenAiCompatibleModels({
         vendorName: String(payload?.vendorName || ""),
         baseUrl: String(payload?.baseUrl || ""),
         apiKey: String(payload?.apiKey || ""),
+        providerKind,
+        headers,
         models: Array.isArray(payload?.models)
           ? (payload.models as Array<Record<string, unknown>>).map((m) => ({
               id: String(m?.id || ""),
@@ -525,24 +538,58 @@ function registerOnboardingIpc(): void {
   // button. Honest result only — never gates saving. Minimal request body kept
   // conservative for the widest openai-compatible tolerance.
   ipcMain.handle("nomi:onboarding:test-connection", async (_event, payload: Record<string, unknown>) => {
-    const baseUrl = String(payload?.baseUrl || "").trim().replace(/\/+$/, "");
+    const providerKind =
+      payload?.providerKind === "anthropic" ? "anthropic" : "openai-compatible";
+    const rawBaseUrl = String(payload?.baseUrl || "").trim().replace(/\/+$/, "");
+    const baseUrl =
+      providerKind === "anthropic" && !rawBaseUrl ? "https://api.anthropic.com" : rawBaseUrl;
     const apiKey = String(payload?.apiKey || "").trim();
     const modelId = String(payload?.modelId || "").trim();
     if (!/^https?:\/\//i.test(baseUrl)) return { ok: false, error: "接入地址需以 http:// 或 https:// 开头" };
+    // User-supplied relay/proxy headers replay on the probe too, so a gateway that
+    // gates on them doesn't report a false failure.
+    const extraHeaders: Record<string, string> = {};
+    if (payload?.headers && typeof payload.headers === "object") {
+      for (const [k, v] of Object.entries(payload.headers as Record<string, unknown>)) {
+        const key = String(k).trim();
+        const value = String(v ?? "").trim();
+        if (key && value) extraHeaders[key] = value;
+      }
+    }
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 12_000);
     try {
-      const res = await fetch(`${baseUrl}/chat/completions`, {
+      const url =
+        providerKind === "anthropic" ? `${baseUrl}/v1/messages` : `${baseUrl}/chat/completions`;
+      const headers: Record<string, string> =
+        providerKind === "anthropic"
+          ? {
+              "content-type": "application/json",
+              "anthropic-version": "2023-06-01",
+              ...(apiKey ? { "x-api-key": apiKey } : {}),
+              ...extraHeaders,
+            }
+          : {
+              "content-type": "application/json",
+              ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+              ...extraHeaders,
+            };
+      const body =
+        providerKind === "anthropic"
+          ? {
+              model: modelId || "claude-3-5-haiku-latest",
+              max_tokens: 1,
+              messages: [{ role: "user", content: "ping" }],
+            }
+          : {
+              model: modelId || "gpt-3.5-turbo",
+              messages: [{ role: "user", content: "ping" }],
+              max_tokens: 1,
+            };
+      const res = await fetch(url, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-        },
-        body: JSON.stringify({
-          model: modelId || "gpt-3.5-turbo",
-          messages: [{ role: "user", content: "ping" }],
-          max_tokens: 1,
-        }),
+        headers,
+        body: JSON.stringify(body),
         signal: controller.signal,
       });
       if (res.ok) return { ok: true, status: res.status };

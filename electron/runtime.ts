@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { hardenedFetch, hardenedFetchText } from "./hardenedFetch";
-import { generateText, streamText, tool, type CoreMessage } from "ai";
+import { generateText, streamText, tool, type CoreMessage, type LanguageModelV1 } from "ai";
 import { z } from "zod";
 import { buildAiSdkModel } from "./ai/buildAiSdkModel";
 import { mergeMissingParamsIntoBody } from "./ai/onboarding/curlBlueprint";
@@ -1155,7 +1155,13 @@ export function listModelCatalogMappings(params?: unknown): Mapping[] {
  * vendors only — query/x-api-key auth isn't a chat-completions shape.
  */
 export function resolveOnboardingAgentFromCatalog():
-  | { providerKind: AiSdkProviderKind; baseUrl: string; modelId: string; apiKey: string }
+  | {
+      providerKind: AiSdkProviderKind;
+      baseUrl: string;
+      modelId: string;
+      apiKey: string;
+      extraHeaders?: Record<string, string>;
+    }
   | null {
   const state = readCatalog();
   for (const model of state.models) {
@@ -1164,11 +1170,13 @@ export function resolveOnboardingAgentFromCatalog():
     if (!vendor || !vendor.baseUrlHint) continue;
     const apiKey = decryptApiKeyRecord(state.apiKeysByVendor[vendor.key]);
     if (!apiKey) continue;
+    const extraHeaders = extractVendorExtraHeaders(vendor);
     return {
       providerKind: normalizeProviderKind(vendor.providerKind),
       baseUrl: vendor.baseUrlHint,
       modelId: model.modelKey,
       apiKey,
+      ...(extraHeaders ? { extraHeaders } : {}),
     };
   }
   return null;
@@ -1327,7 +1335,8 @@ export function commitOnboardedModelToCatalog(payload: {
   const auth = (draft.vendorAuth || {}) as JsonRecord;
   const authType = (auth.type as Vendor["authType"]) || "bearer";
 
-  // 1. vendor
+  // 1. vendor — carry draft.vendorMeta through so the manual-entry form's custom
+  // request headers (vendorMeta.extraHeaders) persist and reach buildAiSdkModel.
   upsertModelCatalogVendor({
     key: vendorKey,
     name: vendorName,
@@ -1337,6 +1346,7 @@ export function commitOnboardedModelToCatalog(payload: {
     authQueryParam: auth.queryParam || null,
     providerKind: draft.vendorProviderKind || "openai-compatible",
     enabled: true,
+    ...(draft.vendorMeta !== undefined ? { meta: draft.vendorMeta } : {}),
   });
 
   // 2. apiKey (auto-encrypted by upsert)
@@ -1454,9 +1464,21 @@ export function commitManualOpenAiCompatibleModels(payload: {
   baseUrl: string;
   apiKey: string;
   models: Array<{ id: string; displayName?: string }>;
+  /** Endpoint shape. Defaults to "openai-compatible" (the common case). "anthropic"
+   *  routes text/chat through the Messages API (createAnthropic, x-api-key). */
+  providerKind?: AiSdkProviderKind;
+  /** Extra request headers for relay/proxy gateways, persisted on the vendor and
+   *  replayed on every model call via buildAiSdkModel. */
+  headers?: Record<string, string>;
 }): { vendorKey: string; committed: Array<{ modelKey: string; displayName: string }> } {
-  const baseUrl = String(payload?.baseUrl || "").trim();
+  const rawBaseUrl = String(payload?.baseUrl || "").trim();
   const apiKey = String(payload?.apiKey || "").trim();
+  const providerKind = normalizeProviderKind(payload?.providerKind);
+  // Anthropic offers a hosted default; an OpenAI-compatible endpoint must be told.
+  // For anthropic with a blank field we fill in the canonical host so the vendor
+  // always has a concrete baseUrlHint (the doc-reader + commit path require one).
+  const baseUrl =
+    providerKind === "anthropic" && !rawBaseUrl ? "https://api.anthropic.com" : rawBaseUrl;
   if (!/^https?:\/\//i.test(baseUrl)) throw new Error("接入地址需以 http:// 或 https:// 开头");
   if (!apiKey) throw new Error("API Key 不能为空");
 
@@ -1464,6 +1486,16 @@ export function commitManualOpenAiCompatibleModels(payload: {
   if (!vendorKey) throw new Error("无法从接入地址解析出供应商标识");
 
   const vendorName = String(payload?.vendorName || "").trim() || vendorKey;
+
+  // Clean custom headers: trim, drop blanks. Stored on vendor.meta.extraHeaders.
+  const cleanHeaders: Record<string, string> = {};
+  for (const [k, v] of Object.entries(payload?.headers || {})) {
+    const key = String(k || "").trim();
+    const value = String(v ?? "").trim();
+    if (key && value) cleanHeaders[key] = value;
+  }
+  const vendorMeta =
+    Object.keys(cleanHeaders).length > 0 ? { extraHeaders: cleanHeaders } : undefined;
 
   const rawModels = Array.isArray(payload?.models) ? payload.models : [];
   const seen = new Set<string>();
@@ -1487,8 +1519,9 @@ export function commitManualOpenAiCompatibleModels(payload: {
         vendorKey,
         vendorName,
         vendorBaseUrl: baseUrl,
-        vendorAuth: { type: "bearer" as const },
-        vendorProviderKind: "openai-compatible" as const,
+        vendorAuth: { type: providerKind === "anthropic" ? ("x-api-key" as const) : ("bearer" as const) },
+        vendorProviderKind: providerKind,
+        ...(vendorMeta ? { vendorMeta } : {}),
         modelKey: m.id,
         modelDisplayName: displayName,
         targetKind: "text" as const,
@@ -2573,6 +2606,47 @@ function chooseTextModel(): { vendor: Vendor; model: Model; apiKey: string } {
   throw new Error("No local text model is configured. Open model settings and add an API key.");
 }
 
+/**
+ * Read user-supplied custom request headers off a vendor. Stored under
+ * `vendor.meta.extraHeaders` (a string→string map) by the manual-entry form so
+ * relay/proxy gateways that need an extra auth header work without us hardcoding
+ * per-provider knowledge. Returns undefined when none are set.
+ */
+export function extractVendorExtraHeaders(vendor: Vendor): Record<string, string> | undefined {
+  const meta = vendor.meta as JsonRecord | undefined;
+  const raw = meta?.extraHeaders;
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    const k = String(key || "").trim();
+    const v = String(value ?? "").trim();
+    if (k && v) out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * Single vendor→LanguageModel construction path. Both runAgentChat and
+ * runAgentChatV2 (and any future caller) go through here so provider-kind,
+ * baseURL shaping, and custom headers stay consistent (Rule 1: no parallel
+ * versions). anthropic uses the vendor's baseUrlHint verbatim (or the SDK
+ * default when blank); openai-compatible appends /v1.
+ */
+function buildLanguageModelForVendor(vendor: Vendor, model: Model, apiKey: string): LanguageModelV1 {
+  const providerKind = normalizeProviderKind(vendor.providerKind);
+  const baseURL = providerKind === "anthropic"
+    ? (vendor.baseUrlHint || "").trim()
+    : endpoint(vendor, "/v1");
+  const headers = extractVendorExtraHeaders(vendor);
+  return buildAiSdkModel({
+    kind: providerKind,
+    baseURL,
+    apiKey,
+    modelId: model.modelAlias || model.modelKey,
+    ...(headers ? { headers } : {}),
+  });
+}
+
 export async function runAgentChat(payload: unknown): Promise<unknown> {
   const raw = payload as JsonRecord;
   const { vendor, model, apiKey } = chooseTextModel();
@@ -2586,17 +2660,7 @@ export async function runAgentChat(payload: unknown): Promise<unknown> {
   const systemParts = [AGENT_LANGUAGE_DIRECTIVE, systemPrompt, skillSystemPrompt].filter((part) => part && part.length > 0);
   const system = systemParts.length > 0 ? systemParts.join("\n\n") : undefined;
 
-  const providerKind: AiSdkProviderKind = vendor.providerKind || "openai-compatible";
-  const baseURL = providerKind === "anthropic"
-    ? (vendor.baseUrlHint || "").trim()
-    : endpoint(vendor, "/v1");
-
-  const languageModel = buildAiSdkModel({
-    kind: providerKind,
-    baseURL,
-    apiKey,
-    modelId: model.modelAlias || model.modelKey,
-  });
+  const languageModel = buildLanguageModelForVendor(vendor, model, apiKey);
 
   const result = await generateText({
     model: languageModel,
@@ -2853,17 +2917,7 @@ export async function runAgentChatV2(
   const systemParts = [AGENT_LANGUAGE_DIRECTIVE, systemPrompt, skillSystemPrompt].filter((part) => part && part.length > 0);
   const system = systemParts.length > 0 ? systemParts.join("\n\n") : undefined;
 
-  const providerKind: AiSdkProviderKind = vendor.providerKind || "openai-compatible";
-  const baseURL = providerKind === "anthropic"
-    ? (vendor.baseUrlHint || "").trim()
-    : endpoint(vendor, "/v1");
-
-  const languageModel = buildAiSdkModel({
-    kind: providerKind,
-    baseURL,
-    apiKey,
-    modelId: model.modelAlias || model.modelKey,
-  });
+  const languageModel = buildLanguageModelForVendor(vendor, model, apiKey);
 
   // Pick the tool group by skill: creation-area skills get document tools,
   // everything else gets canvas tools. The canonical skill key lives in

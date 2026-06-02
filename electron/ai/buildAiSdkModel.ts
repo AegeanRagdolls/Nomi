@@ -24,6 +24,12 @@ export interface BuildAiSdkModelInput {
   baseURL: string;
   apiKey: string;
   modelId: string;
+  /**
+   * Extra HTTP headers sent on every request to the provider. Lets users add
+   * relay/proxy auth headers (e.g. `HTTP-Referer`, a second bearer, a vendor's
+   * custom gateway token) without us hardcoding per-provider knowledge.
+   */
+  headers?: Record<string, string>;
 }
 
 /**
@@ -57,6 +63,23 @@ function buildProfiledFetch(modelId: string): typeof fetch {
   }) as typeof fetch;
 }
 
+/**
+ * Drop blank keys/values and trim, returning undefined when nothing usable is
+ * left so callers can spread conditionally.
+ */
+function sanitizeHeaders(
+  raw: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    const k = (key || "").trim();
+    const v = (value || "").trim();
+    if (k && v) out[k] = v;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 export function buildAiSdkModel(input: BuildAiSdkModelInput): LanguageModelV1 {
   const apiKey = (input.apiKey || "").trim();
   if (!apiKey) {
@@ -67,11 +90,13 @@ export function buildAiSdkModel(input: BuildAiSdkModelInput): LanguageModelV1 {
     throw new Error("buildAiSdkModel: modelId is required");
   }
   const baseURL = (input.baseURL || "").trim().replace(/\/+$/, "");
+  const headers = sanitizeHeaders(input.headers);
 
   if (input.kind === "anthropic") {
     const provider = createAnthropic({
       apiKey,
       ...(baseURL ? { baseURL } : {}),
+      ...(headers ? { headers } : {}),
     });
     return provider.languageModel(modelId);
   }
@@ -83,6 +108,7 @@ export function buildAiSdkModel(input: BuildAiSdkModelInput): LanguageModelV1 {
     name: "nomi",
     baseURL,
     apiKey,
+    ...(headers ? { headers } : {}),
     fetch: buildProfiledFetch(modelId),
   });
   return provider.chatModel(modelId);

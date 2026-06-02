@@ -120,6 +120,8 @@ export type DesktopBridge = {
       vendorName: string
       baseUrl: string
       apiKey: string
+      providerKind?: 'openai-compatible' | 'anthropic'
+      headers?: Record<string, string>
       models: Array<{ id: string; displayName?: string }>
     }) => Promise<{
       ok: boolean
@@ -127,7 +129,13 @@ export type DesktopBridge = {
       committed?: Array<{ modelKey: string; displayName: string }>
       error?: string
     }>
-    testConnection: (payload: { baseUrl: string; apiKey: string; modelId?: string }) => Promise<{
+    testConnection: (payload: {
+      baseUrl: string
+      apiKey: string
+      modelId?: string
+      providerKind?: 'openai-compatible' | 'anthropic'
+      headers?: Record<string, string>
+    }) => Promise<{
       ok: boolean
       status?: number
       error?: string

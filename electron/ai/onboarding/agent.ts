@@ -28,6 +28,8 @@ export type OnboardingAgentInput = {
     baseUrl: string;
     modelId: string;
     apiKey: string;
+    /** Custom request headers for relay/proxy gateways (from the vendor's meta). */
+    extraHeaders?: Record<string, string>;
   };
   /** Max LLM steps. Default 10. */
   maxSteps?: number;
@@ -76,6 +78,7 @@ export async function runOnboardingTrial(input: OnboardingAgentInput): Promise<T
     baseURL: input.agent.baseUrl,
     apiKey: input.agent.apiKey,
     modelId: input.agent.modelId,
+    ...(input.agent.extraHeaders ? { headers: input.agent.extraHeaders } : {}),
   });
 
   let llmError: Error | null = null;

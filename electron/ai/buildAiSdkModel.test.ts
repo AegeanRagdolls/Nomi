@@ -29,6 +29,26 @@ describe("buildAiSdkModel", () => {
     expect(model.provider).toMatch(/anthropic/);
   });
 
+  it("accepts custom request headers without breaking model construction", () => {
+    const model = buildAiSdkModel({
+      kind: "openai-compatible",
+      baseURL: "https://relay.example.com/v1",
+      apiKey: "test-key",
+      modelId: "gpt-4o-mini",
+      headers: { "HTTP-Referer": "https://nomi.app", "X-Title": "Nomi", blank: "  " },
+    });
+    expect(model.modelId).toBe("gpt-4o-mini");
+
+    const anthropic = buildAiSdkModel({
+      kind: "anthropic",
+      baseURL: "",
+      apiKey: "test-key",
+      modelId: "claude-3-5-sonnet-latest",
+      headers: { "anthropic-beta": "prompt-caching-2024-07-31" },
+    });
+    expect(anthropic.modelId).toBe("claude-3-5-sonnet-latest");
+  });
+
   it("throws when apiKey is missing", () => {
     expect(() =>
       buildAiSdkModel({

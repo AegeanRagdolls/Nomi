@@ -14,7 +14,7 @@
  * Auto-commits to catalog on success (the IPC handler does it).
  */
 import React from 'react'
-import { Stack, Group, Text, PasswordInput, ActionIcon, Anchor } from '@mantine/core'
+import { Stack, Group, Text, PasswordInput, ActionIcon, Anchor, SegmentedControl } from '@mantine/core'
 import { IconPlus, IconTrash } from '@tabler/icons-react'
 import { DesignButton, DesignModal, DesignTextInput } from '../../design'
 import { getDesktopBridge } from '../../desktop/bridge'
@@ -65,8 +65,14 @@ export function OnboardingWizard({ opened, onClose, onCommitted }: {
   const [userApiKey, setUserApiKey] = React.useState('')
   // manual-form state
   const [vendorName, setVendorName] = React.useState('')
+  // Endpoint shape: 'openai-compatible' (default; Ollama/OpenAI/Kimi/智谱/中转站)
+  // or 'anthropic' (Claude's native /v1/messages — x-api-key, different body).
+  const [providerKind, setProviderKind] = React.useState<'openai-compatible' | 'anthropic'>('openai-compatible')
   const [baseUrl, setBaseUrl] = React.useState('')
   const [models, setModels] = React.useState<Array<{ id: string; displayName: string }>>([{ id: '', displayName: '' }])
+  // Custom request headers (key/value) for relay/proxy gateways. Empty by default
+  // so the common case stays clean; the "添加请求头" button reveals a row on demand.
+  const [headerRows, setHeaderRows] = React.useState<Array<{ key: string; value: string }>>([])
   const [saving, setSaving] = React.useState(false)
   const [testState, setTestState] = React.useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
   const [testMessage, setTestMessage] = React.useState('')
@@ -116,6 +122,28 @@ export function OnboardingWizard({ opened, onClose, onCommitted }: {
     setModels(prev => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)))
   }, [])
 
+  const updateHeader = React.useCallback((index: number, patch: Partial<{ key: string; value: string }>) => {
+    setHeaderRows(prev => prev.map((h, i) => (i === index ? { ...h, ...patch } : h)))
+    setTestState('idle')
+  }, [])
+  const addHeaderRow = React.useCallback(() => {
+    setHeaderRows(prev => [...prev, { key: '', value: '' }])
+  }, [])
+  const removeHeaderRow = React.useCallback((index: number) => {
+    setHeaderRows(prev => prev.filter((_, i) => i !== index))
+    setTestState('idle')
+  }, [])
+  // Collapse the header rows into a clean {key: value} map (dropping blanks).
+  const buildHeadersObject = React.useCallback((): Record<string, string> => {
+    const out: Record<string, string> = {}
+    for (const h of headerRows) {
+      const k = h.key.trim()
+      const v = h.value.trim()
+      if (k && v) out[k] = v
+    }
+    return out
+  }, [headerRows])
+
   const handleTestConnection = React.useCallback(async () => {
     if (!bridge?.onboarding?.testConnection) return
     setTestState('testing')
@@ -125,6 +153,8 @@ export function OnboardingWizard({ opened, onClose, onCommitted }: {
       baseUrl: baseUrl.trim(),
       apiKey: userApiKey.trim(),
       modelId: firstModelId,
+      providerKind,
+      headers: buildHeadersObject(),
     })
     if (res.ok) {
       setTestState('ok')
@@ -133,7 +163,7 @@ export function OnboardingWizard({ opened, onClose, onCommitted }: {
       setTestState('fail')
       setTestMessage(res.error || '连接失败')
     }
-  }, [bridge, baseUrl, userApiKey, models])
+  }, [bridge, baseUrl, userApiKey, models, providerKind, buildHeadersObject])
 
   const handleManualSave = React.useCallback(async () => {
     if (!bridge?.onboarding?.manualCommit) {
@@ -151,6 +181,8 @@ export function OnboardingWizard({ opened, onClose, onCommitted }: {
         vendorName: vendorName.trim(),
         baseUrl: baseUrl.trim(),
         apiKey: userApiKey.trim(),
+        providerKind,
+        headers: buildHeadersObject(),
         models: cleanModels,
       })
       if (res.ok) {
@@ -166,7 +198,7 @@ export function OnboardingWizard({ opened, onClose, onCommitted }: {
     } finally {
       setSaving(false)
     }
-  }, [bridge, vendorName, baseUrl, userApiKey, models, onCommitted])
+  }, [bridge, vendorName, baseUrl, userApiKey, models, providerKind, buildHeadersObject, onCommitted])
 
   const handleStart = React.useCallback(async () => {
     if (!bridge?.onboarding) {
@@ -255,7 +287,13 @@ export function OnboardingWizard({ opened, onClose, onCommitted }: {
   }, [traceJson])
 
   const canStart = docsUrl.trim().length > 0 && userApiKey.trim().length > 0 && phase === 'input'
-  const baseUrlValid = /^https?:\/\//i.test(baseUrl.trim())
+  // Anthropic has a hosted default, so a blank BaseURL is allowed there (we fill in
+  // the official host); an OpenAI-compatible endpoint must be supplied.
+  const baseUrlTrimmed = baseUrl.trim()
+  const baseUrlValid = providerKind === 'anthropic'
+    ? (baseUrlTrimmed === '' || /^https?:\/\//i.test(baseUrlTrimmed))
+    : /^https?:\/\//i.test(baseUrlTrimmed)
+  const canTest = baseUrlValid && (providerKind === 'anthropic' || baseUrlTrimmed.length > 0)
   const hasModelId = models.some(m => m.id.trim().length > 0)
   const canSaveManual = baseUrlValid && userApiKey.trim().length > 0 && hasModelId && !saving
 
@@ -284,12 +322,26 @@ export function OnboardingWizard({ opened, onClose, onCommitted }: {
                 autoFocus
               />
             </Field>
-            <Field label="接入地址（BaseURL）" hint="OpenAI 兼容端点，到 /v1 为止">
+            <Field label="接口类型" hint={providerKind === 'anthropic' ? 'Claude 原生 /v1/messages 接口' : '绝大多数模型（OpenAI / Kimi / 智谱 / 中转站 / Ollama）都选这个'}>
+              <SegmentedControl
+                fullWidth
+                value={providerKind}
+                onChange={value => { setProviderKind(value as 'openai-compatible' | 'anthropic'); setTestState('idle') }}
+                data={[
+                  { label: 'OpenAI 兼容', value: 'openai-compatible' },
+                  { label: 'Anthropic 原生', value: 'anthropic' },
+                ]}
+              />
+            </Field>
+            <Field
+              label="接入地址（BaseURL）"
+              hint={providerKind === 'anthropic' ? '留空用官方 https://api.anthropic.com；中转站填它的地址' : 'OpenAI 兼容端点，到 /v1 为止'}
+            >
               <DesignTextInput
                 value={baseUrl}
                 onChange={e => { setBaseUrl(e.currentTarget.value); setTestState('idle') }}
-                placeholder="http://localhost:11434/v1"
-                error={baseUrl.trim().length > 0 && !baseUrlValid ? '需以 http:// 或 https:// 开头' : undefined}
+                placeholder={providerKind === 'anthropic' ? 'https://api.anthropic.com（可留空）' : 'http://localhost:11434/v1'}
+                error={baseUrlTrimmed.length > 0 && !baseUrlValid ? '需以 http:// 或 https:// 开头' : undefined}
               />
             </Field>
             <Field label="你的 API Key" hint="只存在你的电脑上，加密保存（本地模型可随便填）">
@@ -336,12 +388,49 @@ export function OnboardingWizard({ opened, onClose, onCommitted }: {
               </Group>
             </Stack>
 
+            <Stack gap={4}>
+              {headerRows.length > 0 && <Text size="sm" c="var(--nomi-ink)">自定义请求头</Text>}
+              {headerRows.length > 0 && (
+                <Stack gap={6}>
+                  {headerRows.map((h, i) => (
+                    <Group key={i} gap={6} wrap="nowrap" align="flex-start">
+                      <DesignTextInput
+                        value={h.key}
+                        onChange={e => updateHeader(i, { key: e.currentTarget.value })}
+                        placeholder="Header 名，如 HTTP-Referer"
+                        style={{ flex: 1 }}
+                      />
+                      <DesignTextInput
+                        value={h.value}
+                        onChange={e => updateHeader(i, { value: e.currentTarget.value })}
+                        placeholder="值"
+                        style={{ flex: 1 }}
+                      />
+                      <ActionIcon
+                        variant="subtle"
+                        color="gray"
+                        onClick={() => removeHeaderRow(i)}
+                        aria-label="删除这一行请求头"
+                      >
+                        <IconTrash size={14} />
+                      </ActionIcon>
+                    </Group>
+                  ))}
+                </Stack>
+              )}
+              <Group justify="flex-start">
+                <DesignButton variant="subtle" leftSection={<IconPlus size={14} />} onClick={addHeaderRow}>
+                  添加请求头（可选）
+                </DesignButton>
+              </Group>
+            </Stack>
+
             <Group justify="space-between" align="center">
               <Group gap={8} align="center">
                 <DesignButton
                   variant="subtle"
                   onClick={handleTestConnection}
-                  disabled={!baseUrlValid || testState === 'testing'}
+                  disabled={!canTest || testState === 'testing'}
                   loading={testState === 'testing'}
                 >
                   测试连接

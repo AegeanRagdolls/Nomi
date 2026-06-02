@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   commitManualOpenAiCompatibleModels,
   deriveVendorKeyFromBaseUrl,
+  extractVendorExtraHeaders,
   listModelCatalogModels,
   listModelCatalogVendors,
   resolveOnboardingAgentFromCatalog,
@@ -142,6 +143,60 @@ describe("manual model entry — user journey", () => {
     expect(() =>
       commitManualOpenAiCompatibleModels({ vendorName: "z", baseUrl: "https://ok.test/v1", apiKey: "k", models: [] }),
     ).toThrow(/模型/);
+  });
+
+  it("supports Anthropic-native endpoints (blank BaseURL defaults to the official host)", () => {
+    const result = commitManualOpenAiCompatibleModels({
+      vendorName: "Claude 原生",
+      baseUrl: "",
+      apiKey: "sk-ant-xxx",
+      providerKind: "anthropic",
+      models: [{ id: "claude-3-5-sonnet-latest" }],
+    });
+    // Blank BaseURL filled in with the canonical host → stable vendor key.
+    expect(result.vendorKey).toBe("api-anthropic-com");
+
+    const vendor = listModelCatalogVendors()[0] as {
+      providerKind?: string;
+      baseUrlHint?: string | null;
+      authType?: string;
+    };
+    expect(vendor.providerKind).toBe("anthropic");
+    expect(vendor.baseUrlHint).toBe("https://api.anthropic.com");
+    expect(vendor.authType).toBe("x-api-key");
+
+    // The doc-reader resolves it with the anthropic provider kind.
+    const agent = resolveOnboardingAgentFromCatalog();
+    expect(agent).toMatchObject({
+      providerKind: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      modelId: "claude-3-5-sonnet-latest",
+      apiKey: "sk-ant-xxx",
+    });
+  });
+
+  it("persists custom request headers on the vendor and surfaces them to the agent", () => {
+    commitManualOpenAiCompatibleModels({
+      vendorName: "中转站",
+      baseUrl: "https://relay.example.com/v1",
+      apiKey: "k",
+      headers: { "HTTP-Referer": "https://nomi.app", "X-Title": "Nomi", blankKey: "  " },
+      models: [{ id: "gpt-4o" }],
+    });
+
+    const vendor = listModelCatalogVendors()[0];
+    // Headers land under vendor.meta.extraHeaders, blanks dropped.
+    expect(extractVendorExtraHeaders(vendor)).toEqual({
+      "HTTP-Referer": "https://nomi.app",
+      "X-Title": "Nomi",
+    });
+
+    // The doc-reader carries the same headers so it reaches the same gateway.
+    const agent = resolveOnboardingAgentFromCatalog();
+    expect(agent?.extraHeaders).toEqual({
+      "HTTP-Referer": "https://nomi.app",
+      "X-Title": "Nomi",
+    });
   });
 
   it("re-adding under the same endpoint reuses the vendor and appends models (upsert)", () => {

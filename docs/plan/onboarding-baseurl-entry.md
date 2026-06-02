@@ -97,4 +97,32 @@
 
 **与计划的偏差（有据）**：§1 原写"mappingCreate = 标准 POST /chat/completions"。落地时核对真实架构发现文本模型不经 mapping 消费，故省略该 mapping——否则是不被消费的死数据。其余按计划。
 
-**仍待**：①「测试连接」用了 `gpt-3.5-turbo` 作默认 modelId（当首行模型 id 为空时）——本地端点可能不识别，但 12s 超时 + 诚实报错可接受，二期可改为必填首个模型 id 再测。②首次进入的"零文本模型门控"（一打开/点项目即引导加文本模型）——本次只解了死锁的**能力**前提（手填可加第一个文本模型），**引导时机**的 UX 设计未做，留下一步。③可选 `list-models`（GET /v1/models）、自定义请求头扩 schema —— 均标二期未做。
+**仍待**：①「测试连接」用了 `gpt-3.5-turbo` 作默认 modelId（当首行模型 id 为空时）——本地端点可能不识别，但 12s 超时 + 诚实报错可接受，二期可改为必填首个模型 id 再测。②首次进入的"零文本模型门控"（一打开/点项目即引导加文本模型）——本次只解了死锁的**能力**前提（手填可加第一个文本模型），**引导时机**的 UX 设计未做，留下一步。③可选 `list-models`（GET /v1/models）—— 标二期未做。
+
+## 7. 兼容扩展（方案 A，2026-06-02 第二轮）
+
+> 用户指出端点形状不止一种（原生 Claude 的 `/v1/messages` 与 OpenAI 系 `/chat/completions` 不同；部分中转要自定义认证头）。核对真实代码：Nomi 底层 `buildAiSdkModel` **本就支持 `openai-compatible` 与 `anthropic` 两种线形**，只是手填表单没暴露。opencode 的自定义表单靠「openai-compatible + 自定义 headers」当逃生口，但它其实搞不定原生 Claude（Anthropic 在 opencode 是内置供应商）。Nomi 比它更有优势——把已有的 anthropic 线接到表单即可。
+
+**做什么（两块）**
+1. **供应商类型选择**：表单加「OpenAI 兼容（默认）/ Anthropic 原生」。原生 Claude → `providerKind=anthropic`、`auth=x-api-key`、baseUrl 留空默认 `https://api.anthropic.com`。底层 `buildAiSdkModel` 的 anthropic 分支已就绪，零新增线形代码。
+2. **自定义请求头**：表单加可选 header 列表（key/value，可加可删）。存进 `vendor.meta.extraHeaders`（**不迁移 schema**，meta 字段本就是 `unknown` 且已持久化）。
+
+**关键：header 必须在"真正用模型"那条路生效**，否则填了没用。`buildAiSdkModel` 新增可选 `headers`，透传给 `createOpenAICompatible({headers})` / `createAnthropic({headers})`。runtime 抽出单一 `buildLanguageModelForVendor(vendor, model, apiKey)`，读 `vendor.meta.extraHeaders` 并替换原本重复在 `runAgentChat` / `runAgentChatV2` 两处的 vendor→input 逻辑（消重，规则1）。读文档 agent 经 `resolveOnboardingAgentFromCatalog` 也带上 extraHeaders。
+
+**测试连接随类型变**：anthropic → `POST {baseUrl}/v1/messages`（`x-api-key` + `anthropic-version: 2023-06-01` + 最小 messages 体）；openai → 原 `/chat/completions`。两者都叠加自定义 header。仍非阻塞。
+
+**改动文件**：`buildAiSdkModel.ts`（headers 参数）、`runtime.ts`（helper + 两处调用收敛 + commit 透传 vendorMeta + commitManual 收 providerKind/headers/anthropic 默认 + resolveOnboardingAgent 带 extraHeaders）、`main.ts`（manual-commit 收 providerKind/headers；test-connection 按类型分支）、`preload.ts`+`bridge.ts`（类型）、`onboarding/agent.ts`（透传 headers）、`OnboardingWizard.tsx`（类型 Select + header 行）、`runtime.manual-onboarding.test.ts`（补 anthropic + headers 落 meta 的断言）。
+
+### 执行结果（回填 2026-06-02 第二轮）
+
+全部落地，验收门全绿：
+
+- **`buildAiSdkModel.ts`**：`BuildAiSdkModelInput` 加可选 `headers`；新增 `sanitizeHeaders`（trim + 丢空）后透传给 `createOpenAICompatible({headers})` / `createAnthropic({headers})`。
+- **`runtime.ts`**：新增导出 `extractVendorExtraHeaders(vendor)`（读 `vendor.meta.extraHeaders`）；新增 `buildLanguageModelForVendor(vendor, model, apiKey)` 单一构造路径，**`runAgentChat`+`runAgentChatV2` 两处重复的 vendor→input 块已物理删除并收敛到此**（规则 1）。`commitOnboardedModelToCatalog` 透传 `draft.vendorMeta`。`commitManualOpenAiCompatibleModels` 收 `providerKind`/`headers`：anthropic 空 BaseURL 自动填 `https://api.anthropic.com`（保证 vendor 始终有具体 baseUrlHint，commit + 读文档路径都要求非空）、auth 落 `x-api-key`、headers 清洗后落 `vendorMeta.extraHeaders`。`resolveOnboardingAgentFromCatalog` 返回值带 `extraHeaders`。
+- **`main.ts`**：manual-commit 透传 providerKind/headers；test-connection 按类型分支（anthropic → `POST {baseUrl}/v1/messages` + `x-api-key` + `anthropic-version: 2023-06-01`，模型默认 `claude-3-5-haiku-latest`；openai → 原 `/chat/completions`），两路都叠加自定义 header，仍非阻塞。onboarding:start 把 `fromCatalog.extraHeaders` 接进 agent。
+- **`agent.ts`**：`agent` 入参加可选 `extraHeaders`，透传给 `buildAiSdkModel`。
+- **`bridge.ts`**：manualCommit/testConnection 类型加 `providerKind?` + `headers?`。`preload.ts` 因 payload 为 `unknown` 无需改（一度误加重复 testConnection，已删回）。
+- **`OnboardingWizard.tsx`**：加「OpenAI 兼容 / Anthropic 原生」`SegmentedControl`；BaseURL 文案/校验随类型变（anthropic 允许留空）；自定义请求头按需出现（默认 0 行 +「添加请求头（可选）」按钮，不污染常见路径，符合规则 2）；providerKind/headers 透传给两个 bridge 调用。
+- **测试**：`runtime.manual-onboarding.test.ts` 补 anthropic（空 BaseURL→官方 host、authType=x-api-key、agent 带 anthropic kind）与 headers 落 `vendor.meta.extraHeaders` + agent 带 extraHeaders 两条；`buildAiSdkModel.test.ts` 补 headers 不破坏构造一条。
+
+**验收门**：`npx tsc -p electron/tsconfig.json --noEmit` 0 错；`pnpm build`（vite + electron tsc）绿；`npx vitest run electron/` **34 文件 / 316 测试全过 + 1 todo**。
