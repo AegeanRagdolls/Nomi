@@ -119,36 +119,49 @@ export async function runGenerationNode(
     await persistActiveWorkbenchProjectNow().catch(() => {})
     return result
   } catch (error: unknown) {
+    // Store the RAW message; the UI (NodeErrorReport) runs classifyGenerationError
+    // to show a human reason + hint + the raw detail. Keeping node.error a plain
+    // string avoids a persisted-shape migration for existing project files.
     const rawMessage = error instanceof Error && error.message ? error.message : '生成失败'
-    // v0.7.5: 错误信息友好化 — 给常见 API 错误加 hint
-    const friendlyMessage = enrichGenerationError(rawMessage)
-    useGenerationCanvasStore.getState().setNodeStatus(id, 'error', friendlyMessage)
+    useGenerationCanvasStore.getState().setNodeStatus(id, 'error', rawMessage)
     throw error
   }
 }
 
+export type GenerationErrorReport = {
+  /** Short human reason, e.g. 配额或限流. */
+  reason: string
+  /** Actionable suggestion sentence (empty for unknown errors). */
+  hint: string
+  /** Original raw error message (any "→ hint" tail from older builds stripped). */
+  raw: string
+}
+
 /**
- * 把底层 API 错误转成用户能行动的文案。
- * 常见情况：API key 缺失/无效、模型未配置、配额耗尽、网络问题、超时。
+ * Single source of truth: classify a raw API error into a human reason + hint.
+ * The generation runner stores the raw message; the node error UI calls this to
+ * render. Common cases: API key 无效、模型未配置、配额/限流、网络/超时、内容拦截。
  */
-function enrichGenerationError(message: string): string {
-  const lower = message.toLowerCase()
+export function classifyGenerationError(message: string): GenerationErrorReport {
+  // Strip any legacy "\n→ hint" tail that older builds baked into node.error.
+  const raw = String(message || '').split('\n→')[0].trim() || '生成失败'
+  const lower = raw.toLowerCase()
   if (lower.includes('api key') || lower.includes('apikey') || lower.includes('unauthorized') || lower.includes('401')) {
-    return `${message}\n→ 请在「模型接入」页检查 API Key`
+    return { reason: 'API Key 无效', hint: '请在「模型接入」页检查这个模型的 API Key。', raw }
   }
   if (lower.includes('quota') || lower.includes('rate limit') || lower.includes('429') || lower.includes('insufficient')) {
-    return `${message}\n→ 服务商配额或限流，请稍后重试或更换模型`
+    return { reason: '配额或限流', hint: '服务商配额已用尽或触发限流，请稍后重试，或在「模型接入」换一个模型。', raw }
   }
   if (lower.includes('timeout') || lower.includes('etimedout') || lower.includes('econnreset') || lower.includes('network')) {
-    return `${message}\n→ 网络问题，请检查网络后重试`
+    return { reason: '网络超时', hint: '网络问题，请检查网络后重试。', raw }
   }
   if (lower.includes('model') && (lower.includes('not found') || lower.includes('未找到') || lower.includes('not configured'))) {
-    return `${message}\n→ 模型未配置，请去「模型接入」页设置`
+    return { reason: '模型未配置', hint: '这个模型没配好，请去「模型接入」页设置。', raw }
   }
   if (lower.includes('content') && (lower.includes('policy') || lower.includes('safety') || lower.includes('filter'))) {
-    return `${message}\n→ 提示词被安全策略拦截，请修改后重试`
+    return { reason: '提示词被拦截', hint: '提示词触发了安全策略，请修改后重试。', raw }
   }
-  return message
+  return { reason: '生成失败', hint: '', raw }
 }
 
 export type RunGenerationNodesBatchOptions = RunGenerationNodeOptions & {

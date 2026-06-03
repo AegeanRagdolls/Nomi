@@ -1,5 +1,4 @@
 import React from 'react'
-import { ErrorBadge } from './ErrorBadge'
 import { cn } from '../../../utils/cn'
 import type { GenerationCanvasNode } from '../model/generationCanvasTypes'
 import { useGenerationCanvasStore } from '../store/generationCanvasStore'
@@ -119,9 +118,6 @@ export default function NodeGenerationComposer({ node, visualSize }: Props): JSX
         onBlur={() => { void persistActiveWorkbenchProjectNow().catch(() => {}) }}
       />
       <div className={cn('flex items-center gap-1 mt-auto min-w-0 pt-1')}>
-        {status === 'error' && node.error ? (
-          <ErrorBadge message={node.error} />
-        ) : null}
         <NodeParameterControls node={node} section="parameters" valueOnly />
         {(() => {
           const disabledReason = !canGenerate && !isGenerating

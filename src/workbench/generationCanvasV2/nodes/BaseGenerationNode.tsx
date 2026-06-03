@@ -27,7 +27,8 @@ import {
 import { clientXToFrame } from "../../timeline/timelineEdit";
 import { getTrackTypeForClipType } from "../../timeline/timelineTypes";
 import { buildClipFromGenerationNode } from "../model/buildClipFromGenerationNode";
-import { canRunGenerationNode } from "../runner/generationRunController";
+import { canRunGenerationNode, runGenerationNode } from "../runner/generationRunController";
+import { NodeErrorReport } from "./NodeErrorReport";
 import { WorkbenchButton } from "../../../design";
 import NodeGenerationComposer from "./NodeGenerationComposer";
 import { buildVideoPlaybackUrl } from "../../../media/videoPlaybackUrl";
@@ -1073,13 +1074,12 @@ function BaseGenerationNodeImpl({
                 onClose={() => setProvenanceOpen(false)}
             />
 
-            {status === "error" && node.error && !selected ? (
-                <div
-                    className='generation-canvas-v2-node__error-peek'
-                    title={node.error}>
-                    {node.error.length > 40
-                        ? node.error.slice(0, 40) + "…"
-                        : node.error}
+            {status === "error" && node.error ? (
+                <div className="absolute inset-x-1 bottom-1 z-[6]">
+                    <NodeErrorReport
+                        message={node.error}
+                        onRetry={() => { void runGenerationNode(node.id) }}
+                    />
                 </div>
             ) : null}
 
