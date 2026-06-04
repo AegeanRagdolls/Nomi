@@ -68,6 +68,28 @@ describe("ExportJobManager", () => {
     expect(manager.listJobs("project-1")).toEqual([job]);
   });
 
+  it("reaps orphaned active jobs from a previous process on hydrate (no deadlock)", () => {
+    const projectDir = makeTempDir();
+    // 进程1：创建 job（queued = active），随即"崩溃"（永不完成）。
+    const m1 = new ExportJobManager({ idGenerator: () => "job-1", clock: () => "2026-05-24T01:00:00.000Z" });
+    m1.createJob({ projectId: "project-1", projectDir, manifest: makeManifest() });
+
+    // 进程2：重启，hydrate 同一项目目录 → 孤儿 active job 应被 reap 成 failed。
+    const m2 = new ExportJobManager({
+      projectDirs: [projectDir],
+      idGenerator: () => "job-2",
+      clock: () => "2026-05-24T02:00:00.000Z",
+    });
+    const reaped = m2.getJob("job-1");
+    expect(reaped?.status).toBe("failed");
+    expect(reaped?.error?.message).toMatch(/restart/i);
+
+    // 不再死锁：能创建新 job（旧版会 throw "Cannot create export job while active …"）。
+    const fresh = m2.createJob({ projectId: "project-1", projectDir, manifest: makeManifest() });
+    expect(fresh.id).toBe("job-2");
+    expect(fresh.status).toBe("queued");
+  });
+
   it("emits event on status update", () => {
     const projectDir = makeTempDir();
     const manager = new ExportJobManager({ idGenerator: () => "job-1", clock: () => "2026-05-24T01:00:00.000Z" });
@@ -104,15 +126,19 @@ describe("ExportJobManager", () => {
     expect(() => manager.createJob({ projectId: "project-1", projectDir, manifest: makeManifest() })).toThrow(/active export job/i);
   });
 
-  it("rejects creating a new job when an active job is persisted for the project after restart", () => {
+  it("reaps a persisted orphan active job on restart instead of deadlocking (createJob-triggered hydrate)", () => {
     const projectDir = makeTempDir();
     const firstManager = new ExportJobManager({ idGenerator: () => "job-1", clock: () => "2026-05-24T01:00:00.000Z" });
     firstManager.createJob({ projectId: "project-1", projectDir, manifest: makeManifest() });
+    // 进程2：未在构造时 hydrate；createJob 内部 hydrate 应 reap 掉上个进程的孤儿 active job。
     const restartedManager = new ExportJobManager({ idGenerator: () => "job-2", clock: () => "2026-05-24T01:01:00.000Z" });
 
-    expect(() => restartedManager.createJob({ projectId: "project-1", projectDir, manifest: makeManifest() })).toThrow(
-      /active export job job-1 is queued/i,
-    );
+    // 旧行为：抛 "Cannot create export job while active export job job-1 is queued"（死锁）。
+    // 新行为：reap 孤儿 → 成功创建新 job。
+    const fresh = restartedManager.createJob({ projectId: "project-1", projectDir, manifest: makeManifest() });
+    expect(fresh.id).toBe("job-2");
+    expect(fresh.status).toBe("queued");
+    expect(restartedManager.getJob("job-1")?.status).toBe("failed");
   });
 
   it("hydrates persisted failed jobs for manager get/list readback", () => {

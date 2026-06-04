@@ -250,8 +250,26 @@ export class ExportJobManager {
     const resolvedProjectDir = path.resolve(projectDir);
     this.projectDirs.add(resolvedProjectDir);
     for (const job of this.store.loadRecentJobs(resolvedProjectDir)) {
+      if (this.jobs.has(job.id)) continue; // 本会话已在跟踪，别用磁盘旧态覆盖
+      if (isActive(job.status)) {
+        // 上个进程崩溃/退出残留的孤儿 active job：本实例并未在跑它，却会永久占用
+        // "单 active job" 名额，导致该项目再也无法导出。reap 成 failed 解锁。
+        this.reapStaleActiveJob(job);
+        continue;
+      }
       this.jobs.set(job.id, job);
       this.projectDirs.add(path.resolve(job.projectDir));
     }
+  }
+
+  private reapStaleActiveJob(job: ExportJobSnapshot): void {
+    const failed: ExportJobSnapshot = {
+      ...job,
+      status: "failed",
+      cancelled: false,
+      error: { message: "Export interrupted by app restart" },
+      updatedAt: this.clock(),
+    };
+    this.saveAndEmit(failed, ["status", "error"]);
   }
 }
