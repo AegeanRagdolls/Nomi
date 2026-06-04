@@ -14,6 +14,7 @@ import { planExport } from "./export/exportPlanner";
 import { ExportCancelledError, renderFiltergraphToMp4, transcodeWebmFileToMp4, transcodeWebmToMp4, type TimelineMp4ExportResult } from "./export/ffmpegRunner";
 import { compileFfmpegFiltergraph, type FfmpegFiltergraphPlan } from "./export/ffmpegFiltergraph";
 import { probeMediaMetadata } from "./export/mediaProbe";
+import { endpoint } from "./vendorEndpoint";
 import { appendExportTempInputChunk, finishExportTempInput as finishExportTempInputFile, removeExportTempInput } from "./export/exportTempInput";
 import {
   canvasNodeKindSchema,
@@ -1890,20 +1891,7 @@ function authQueryParams(vendor: Vendor, apiKey: string): Record<string, string>
   return buildAuthQueryParams(vendor.authType as AuthType, apiKey, vendor.authQueryParam ?? undefined);
 }
 
-export function endpoint(vendor: Vendor, suffix: string): string {
-  const base = String(vendor.baseUrlHint || "").trim().replace(/\/+$/, "");
-  if (!base) throw new Error(`Base URL missing: ${vendor.key}`);
-  // Don't double-append: if the vendor already configured a baseUrlHint that
-  // ends in the full suffix, respect it.
-  if (suffix && base.endsWith(suffix)) return base;
-  // 用户常把整段 "https://api.example.com/v1" 填进 Base URL（README 也这么教）。
-  // 若 base 以 /v1 结尾、suffix 又以 /v1/ 开头，合并避免拼成 ".../v1/v1/..."
-  // （Moonshot 等供应商对错误路径返回"没找到对象"）。
-  if (suffix.startsWith("/v1/") && base.endsWith("/v1")) {
-    return `${base}${suffix.slice(3)}`;
-  }
-  return `${base}${suffix}`;
-}
+// endpoint() 已抽到 electron/vendorEndpoint.ts（纯函数，便于无 electron 的单测）
 
 
 function billingKindForTaskKind(kind: ProfileKind): BillingModelKind {

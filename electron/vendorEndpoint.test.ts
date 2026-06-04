@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { endpoint } from "./runtime";
+// 从纯模块导入，避免 import 整个 runtime 触发 electron 加载（CI 纯 Node 会失败）
+import { endpoint } from "./vendorEndpoint";
 
-// endpoint 只读 vendor.baseUrlHint / vendor.key，测试用最小对象即可
-const vendor = (baseUrlHint: string) => ({ key: "test", baseUrlHint }) as never;
+const vendor = (baseUrlHint: string) => ({ key: "test", baseUrlHint });
 
 describe("endpoint URL 拼接", () => {
   it("base 以 /v1 结尾 + 后缀以 /v1 开头 → 合并，不拼成双 /v1（Moonshot '没找到对象' 根因）", () => {
