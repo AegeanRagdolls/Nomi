@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import type { BillingModelKind } from "../../../api/server";
+import type { BillingModelKind } from "../../../api/desktopClient";
 
 export type GenerationNodeRenderProps<TNode = unknown> = {
     node: TNode;

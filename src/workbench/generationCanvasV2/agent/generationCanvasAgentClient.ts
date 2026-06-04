@@ -1,4 +1,4 @@
-import type { AgentsChatResponseDto } from '../../../api/server'
+import type { AgentsChatResponseDto } from '../../../api/desktopClient'
 import { runWorkbenchAgent, workbenchSessionKey, type ToolCallEvent } from '../../ai/workbenchAgentRunner'
 import type { GenerationCanvasSnapshot, GenerationCanvasNode, GenerationNodeKind } from '../model/generationCanvasTypes'
 import { getAgentCreatableGenerationNodeKinds, getGenerationNodeDefaultTitle } from '../model/generationNodeKinds'

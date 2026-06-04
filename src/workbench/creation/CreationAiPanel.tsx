@@ -4,7 +4,7 @@ import { NomiAILabel, NomiLoadingMark, WorkbenchButton, WorkbenchIconButton } fr
 import { NomiMarkdown } from '../common/NomiMarkdown'
 import { cn } from '../../utils/cn'
 import { runWorkbenchAgent, workbenchSessionKey, type ToolCallEvent } from '../ai/workbenchAgentRunner'
-import { clearWorkbenchAgentSession } from '../../api/server'
+import { clearWorkbenchAgentSession } from '../../api/desktopClient'
 import { AiReplyActionButton } from '../ai/AiReplyActionButton'
 import { handleAiComposerKeyDown } from '../ai/aiComposerKeyboard'
 import type { WorkbenchAiMessage } from '../ai/workbenchAiTypes'

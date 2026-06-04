@@ -1,4 +1,4 @@
-import type { AgentsChatResponseDto, AgentChatV2Session } from '../../api/server'
+import type { AgentsChatResponseDto, AgentChatV2Session } from '../../api/desktopClient'
 import { sendWorkbenchAiMessage } from './workbenchAiClient'
 
 /**

@@ -4,7 +4,7 @@ import {
   type AgentChatV2Session,
   type AgentsChatResponseDto,
   type AgentsChatStreamEvent,
-} from '../../api/server'
+} from '../../api/desktopClient'
 
 export type WorkbenchAiRequest = {
   prompt: string

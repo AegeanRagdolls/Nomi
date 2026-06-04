@@ -7,7 +7,7 @@ import {
   type ToolCallEvent,
 } from '../agent/generationCanvasAgentClient'
 import { workbenchSessionKey } from '../../ai/workbenchAgentRunner'
-import { clearWorkbenchAgentSession } from '../../../api/server'
+import { clearWorkbenchAgentSession } from '../../../api/desktopClient'
 import { generationCanvasTools } from '../agent/generationCanvasTools'
 import {
   buildStoryboardPlanningMessage,
