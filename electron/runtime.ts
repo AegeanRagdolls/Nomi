@@ -47,8 +47,7 @@ import {
 } from "./workspace/workspaceRepository";
 import { rememberWorkspace } from "./workspace/workspaceRegistry";
 import { resolveWorkspaceRelativePath } from "./workspace/workspacePaths";
-
-type JsonRecord = Record<string, unknown>;
+import { firstString, isJsonRecord, nowIso, readNestedRecord, trim, type JsonRecord } from "./jsonUtils";
 
 type ProjectRecord = {
   id: string;
@@ -317,9 +316,6 @@ type SkillRecord = {
   body: string;
 };
 
-function nowIso(): string {
-  return new Date().toISOString();
-}
 
 function getProjectsRoot(): string {
   const configured = String(process.env[PROJECT_ROOT_ENV] || "").trim();
@@ -406,14 +402,6 @@ function readSkillRecords(): SkillRecord[] {
   return records;
 }
 
-function readNestedRecord(input: unknown, pathParts: string[]): unknown {
-  let current = input;
-  for (const part of pathParts) {
-    if (!current || typeof current !== "object") return undefined;
-    current = (current as JsonRecord)[part];
-  }
-  return current;
-}
 
 function readRequestedSkill(payload: JsonRecord): { key: string; name: string } {
   const chatContext = payload.chatContext;
@@ -2158,9 +2146,6 @@ export function listProjectAssets(payload: unknown): { items: LocalAssetRecord[]
   };
 }
 
-function trim(value: unknown): string {
-  return typeof value === "string" ? value.trim() : "";
-}
 
 function findExecutableModel(vendorKey: string, modelKey: string, kind?: BillingModelKind): { vendor: Vendor; model: Model; apiKey: string } {
   const state = readCatalog();
@@ -2201,13 +2186,6 @@ function endpoint(vendor: Vendor, suffix: string): string {
   return `${base}${suffix}`;
 }
 
-function firstString(...values: unknown[]): string {
-  for (const value of values) {
-    const text = trim(value);
-    if (text) return text;
-  }
-  return "";
-}
 
 function billingKindForTaskKind(kind: ProfileKind): BillingModelKind {
   if (kind === "text_to_video" || kind === "image_to_video") return "video";
@@ -2266,9 +2244,6 @@ async function localizeTaskAsset(projectId: string, assetUrl: string, type: "ima
   };
 }
 
-function isJsonRecord(value: unknown): value is JsonRecord {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
 
 function findTaskMapping(vendorKey: string, taskKind: ProfileKind): Mapping | null {
   const state = readCatalog();
