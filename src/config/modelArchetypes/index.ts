@@ -1,3 +1,4 @@
+import type { ModelParameterControl } from "../modelCatalogMeta";
 import { SEEDANCE_2_ARCHETYPE } from "./seedance";
 import type { ModelArchetype } from "./types";
 
@@ -66,4 +67,16 @@ export function resolveArchetypeForModel(model: ArchetypeModelLike | null | unde
     }
   }
   return null;
+}
+
+/**
+ * 认得的模型 → 该档案默认模式的参数控件（ModelParameterControl[]，复用现有控件类型）；
+ * 认不出 → null（调用方走现有 flat 解析）。供 model-options 适配层把它注入到 option.meta，
+ * 让现有渲染路径不变就能渲染档案控件。**供应商无关**（resolveArchetypeForModel 只看模型身份）。
+ */
+export function archetypeParameterControls(model: ArchetypeModelLike | null | undefined): ModelParameterControl[] | null {
+  const archetype = resolveArchetypeForModel(model);
+  if (!archetype) return null;
+  const mode = archetype.modes.find((m) => m.id === archetype.defaultModeId) ?? archetype.modes[0];
+  return mode ? mode.params : null;
 }
