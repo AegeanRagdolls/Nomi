@@ -64,6 +64,38 @@ describe("Seedance 2.0 · 首帧 — createTask 请求", () => {
   });
 });
 
+describe("Seedance 2.0 · 互斥投影（M2：首帧不发 last_frame_url）", () => {
+  const inputOf = (op: typeof SEEDANCE_2_CREATE_OP, ctx: ReturnType<typeof buildTemplateContext>) => {
+    const built = buildHttpRequest({ baseUrl: KIE_VENDOR_SEED.baseUrl, authType: KIE_VENDOR_SEED.authType, apiKey: "SECRET", context: ctx, operation: op });
+    return (built.body as { input: Record<string, unknown> }).input;
+  };
+
+  it("首帧（params 无 last_frame_url）→ body 不含 last_frame_url（undefined 被丢弃）", () => {
+    // 复用顶部 context（其 params 不含 last_frame_url）
+    expect(inputOf(SEEDANCE_2_CREATE_OP, context)).not.toHaveProperty("last_frame_url");
+  });
+
+  it("首尾帧（params 有 last_frame_url）→ body 含 first/last 两帧", () => {
+    const ctx = buildTemplateContext({
+      request: { prompt: "过渡" },
+      params: {
+        first_frame_url: FIRST_FRAME_URL,
+        last_frame_url: "https://example.com/last-frame.png",
+        resolution: "720p",
+        aspect_ratio: "16:9",
+        duration: "5",
+        generate_audio: false,
+      },
+      model: { modelKey: SEEDANCE_2_MODEL_SEED.modelKey },
+      modelKey: SEEDANCE_2_MODEL_SEED.modelKey,
+      apiKey: "SECRET",
+    });
+    const input = inputOf(SEEDANCE_2_CREATE_OP, ctx);
+    expect(input.first_frame_url).toBe(FIRST_FRAME_URL);
+    expect(input.last_frame_url).toBe("https://example.com/last-frame.png");
+  });
+});
+
 describe("Seedance 2.0 · 首帧 — recordInfo 轮询请求", () => {
   const built = buildHttpRequest({
     baseUrl: KIE_VENDOR_SEED.baseUrl,

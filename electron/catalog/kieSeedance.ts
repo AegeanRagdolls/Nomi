@@ -49,6 +49,8 @@ export const SEEDANCE_2_CREATE_OP: HttpOperation = {
     input: {
       prompt: "{{request.prompt}}",
       first_frame_url: "{{request.params.first_frame_url}}",
+      // 首尾帧模式才有 last_frame_url；首帧模式 params 里没有 → 渲染成 undefined 被丢掉（M2 互斥）。
+      last_frame_url: "{{request.params.last_frame_url}}",
       resolution: "{{request.params.resolution}}",
       aspect_ratio: "{{request.params.aspect_ratio}}",
       duration: "{{request.params.duration}}",

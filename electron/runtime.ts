@@ -1896,8 +1896,8 @@ function taskTemplateParams(request: TaskRequest): JsonRecord {
     negative_prompt: request.negativePrompt,
     duration,
     image_url: firstReferenceImage(request),
-    first_frame_url: firstString(extras.firstFrameUrl),
-    last_frame_url: firstString(extras.lastFrameUrl),
+    ...(firstString(extras.firstFrameUrl) ? { first_frame_url: firstString(extras.firstFrameUrl) } : {}),
+    ...(firstString(extras.lastFrameUrl) ? { last_frame_url: firstString(extras.lastFrameUrl) } : {}),
     reference_images: Array.isArray(extras.referenceImages) ? extras.referenceImages : [],
     max_tokens: extras.maxTokens ?? extras.max_tokens,
   };
